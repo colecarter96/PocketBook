@@ -10,24 +10,33 @@ import SwiftUI
 import UIKit
 
 struct TimelineView: View {
+    var scrollToTopToken = 0
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(RecentDelete.self) private var recentDelete
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
 
-    @FocusState private var focusedNoteID: PersistentIdentifier?
-    @State private var pendingFocusID: PersistentIdentifier?
+    @State private var editor = TimelineEditor()
     @State private var railProgress: CGFloat = 0
     @State private var railDate: Date?
     @State private var isDraggingRail = false
     @State private var canScrollTimeline = false
     @State private var timelineHeight: CGFloat = 0
+    @State private var restingTimelineHeight: CGFloat = 0
     @State private var hapticNoteIndex = 0
     @State private var railImpactToken = 0
-    @State private var swipedNoteID: PersistentIdentifier?
+    @State private var noteFrames: [PersistentIdentifier: CGRect] = [:]
+    @State private var radialNoteID: PersistentIdentifier?
+    @State private var radialOrigin: CGPoint?
+    @State private var radialFinger: CGPoint?
+    @State private var hoveredAction: NotePressAction?
+    @State private var pressedScale: CGFloat = 1
+    @State private var dimFrame: CGRect = .zero
+    @State private var boardPickerNote: Note?
 
-    private var isEditing: Bool { focusedNoteID != nil }
+    private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
-        notes.count >= 8 && canScrollTimeline && !isEditing && swipedNoteID == nil
+        notes.count >= 8 && canScrollTimeline && radialNoteID == nil
     }
 
     var body: some View {
@@ -40,23 +49,27 @@ struct TimelineView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Save") {
-                        endEditing()
-                    }
-                    .fontWeight(.medium)
-                }
-            }
             .overlay(alignment: .bottomTrailing) {
-                if !isEditing {
-                    composeButton
-                        .padding(.trailing, 30)
-                        .padding(.bottom, 32)
+                VStack(alignment: .trailing, spacing: 14) {
+                    if recentDelete.canUndo {
+                        Button {
+                            recentDelete.undo(in: modelContext)
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.title3.weight(.medium))
+                                .foregroundStyle(Color.gray.opacity(0.55))
+                        }
+                        .accessibilityLabel("Undo Delete")
+                    }
+
+                    if !isEditing {
+                        composeButton
+                    }
                 }
+                .padding(.trailing, 30)
+                .padding(.bottom, 32)
             }
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.never)
         }
         .sensoryFeedback(.selection, trigger: hapticNoteIndex)
         .sensoryFeedback(.impact(weight: .heavy), trigger: railImpactToken)
@@ -103,20 +116,36 @@ struct TimelineView: View {
                 .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 20))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    endEditing()
-                }
-
                 ForEach(notes) { note in
                     NoteRow(
                         note: note,
-                        focusedNoteID: $focusedNoteID,
-                        pendingFocusID: $pendingFocusID,
-                        swipedNoteID: $swipedNoteID,
-                        onDelete: { deleteNote(note) }
+                        isEditing: editor.editingID == note.persistentModelID,
+                        editor: editor,
+                        onTap: { edit(note) },
+                        onLongPress: { state, point in
+                            handlePress(state, at: point, noteID: note.persistentModelID)
+                        }
                     )
                     .id(note.persistentModelID)
+                    .scaleEffect(radialNoteID == note.persistentModelID ? pressedScale : 1)
+                    .rotation3DEffect(
+                        .degrees(tilt(for: note).x),
+                        axis: (x: 1, y: 0, z: 0),
+                        perspective: 0.45
+                    )
+                    .rotation3DEffect(
+                        .degrees(tilt(for: note).y),
+                        axis: (x: 0, y: 1, z: 0),
+                        perspective: 0.45
+                    )
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: NoteFramePreference.self,
+                                value: [note.persistentModelID: geometry.frame(in: .global)]
+                            )
+                        }
+                    }
                     .listRowInsets(EdgeInsets(
                         top: 2,
                         leading: 20,
@@ -132,10 +161,6 @@ struct TimelineView: View {
                     .listRowInsets(.init())
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        endEditing()
-                    }
             }
             .listStyle(.plain)
             .scrollIndicators(.hidden)
@@ -145,38 +170,202 @@ struct TimelineView: View {
                 TimelineScrollState(geometry: geometry)
             } action: { oldState, newState in
                 canScrollTimeline = newState.canScroll
-                timelineHeight = newState.containerHeight
+                if editor.editingID == nil {
+                    timelineHeight = newState.containerHeight
+                    restingTimelineHeight = newState.containerHeight
+                }
                 guard !isDraggingRail else { return }
                 railProgress = newState.progress
                 registerPassedNote(at: newState.progress)
             }
             .overlay(alignment: .trailing) {
                 if canUseRail {
-                    TimeRail(
-                        progress: railProgress,
-                        date: railDate,
-                        isDragging: isDraggingRail,
-                        onDragChanged: { progress in
-                            scrub(to: progress, proxy: proxy)
-                        },
-                        onDragEnded: {
-                            isDraggingRail = false
-                            railImpactToken += 1
-                            persist()
-                        }
-                    )
-                    .padding(.top, 28)
-                    .padding(.bottom, 96)
+                    GeometryReader { geometry in
+                        let railSpan = max(geometry.size.height - 28 - 96, 1)
+                        let topCut = railSpan * (1 - 0.85 * 0.85)
+                        TimeRail(
+                            progress: railProgress,
+                            date: railDate,
+                            isDragging: isDraggingRail,
+                            onDragChanged: { progress in
+                                scrub(to: progress, proxy: proxy)
+                            },
+                            onDragEnded: {
+                                isDraggingRail = false
+                                railImpactToken += 1
+                                persist()
+                            }
+                        )
+                        .padding(.top, 28 + topCut)
+                        .padding(.bottom, 96)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .opacity(isEditing ? 0 : 1)
+                        .allowsHitTesting(!isEditing)
+                    }
                 }
             }
+            .overlay {
+                NoteDimOverlay(noteFrame: dimNoteFrame)
+                    .opacity(radialNoteID == nil ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.28), value: radialNoteID == nil)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                if let radialOrigin {
+                    RadialActionMenu(origin: radialOrigin, hovered: hoveredAction)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onChange(of: scrollToTopToken) { _, _ in
+                if radialNoteID != nil {
+                    cancelRadial()
+                }
+                editor.end()
+                withAnimation(.easeOut(duration: 0.35)) {
+                    proxy.scrollTo(TimelineAnchor.top, anchor: .top)
+                }
+            }
+            .onPreferenceChange(NoteFramePreference.self) { frames in
+                noteFrames = frames
+                if let radialNoteID, let frame = frames[radialNoteID] {
+                    dimFrame = frame
+                }
+            }
+            .sheet(item: $boardPickerNote) { note in
+                BoardPickerSheet(note: note)
+            }
         }
+    }
+
+    private func handlePress(
+        _ state: UIGestureRecognizer.State,
+        at point: CGPoint,
+        noteID: PersistentIdentifier
+    ) -> Bool {
+        switch state {
+        case .began:
+            guard !isEditing else { return false }
+            beginRadial(noteID: noteID, at: point)
+            return true
+        case .changed:
+            guard radialNoteID != nil, let radialOrigin else { return false }
+            radialFinger = point
+            let next = action(at: point, origin: radialOrigin)
+            if next != hoveredAction {
+                hoveredAction = next
+                if next != nil {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+            }
+            return true
+        case .ended:
+            let wasChoosing = radialNoteID != nil
+            finishRadial()
+            if wasChoosing {
+                editor.end()
+            }
+            return true
+        case .cancelled, .failed:
+            if radialNoteID != nil {
+                cancelRadial()
+            }
+            return true
+        default:
+            return radialNoteID != nil
+        }
+    }
+
+    private func edit(_ note: Note) {
+        guard radialNoteID == nil else { return }
+        let isNewest = notes.first?.persistentModelID == note.persistentModelID
+        editor.begin(note.persistentModelID, scrollIntoView: !isNewest)
+    }
+
+    private var dimNoteFrame: CGRect {
+        if let radialNoteID, let frame = noteFrames[radialNoteID], frame.width > 1 {
+            return frame
+        }
+        return dimFrame
+    }
+
+    private func beginRadial(noteID: PersistentIdentifier, at point: CGPoint) {
+        editor.end()
+        if let frame = noteFrames[noteID] {
+            dimFrame = frame
+        }
+        radialNoteID = noteID
+        radialOrigin = point
+        radialFinger = point
+        hoveredAction = nil
+        pressedScale = 0.9
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeOut(duration: 0.1)) {
+            pressedScale = 0.9
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(110))
+            guard radialNoteID == noteID else { return }
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.62)) {
+                pressedScale = 1.08
+            }
+        }
+    }
+
+    private func finishRadial() {
+        let action = hoveredAction
+        let noteID = radialNoteID
+        cancelRadial()
+        guard let action, let noteID, let note = notes.first(where: { $0.persistentModelID == noteID }) else { return }
+        switch action {
+        case .copy:
+            UIPasteboard.general.string = note.text
+        case .board:
+            boardPickerNote = note
+        case .delete:
+            deleteNote(note)
+        }
+    }
+
+    private func cancelRadial() {
+        if let radialNoteID, let frame = noteFrames[radialNoteID] {
+            dimFrame = frame
+        }
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+            pressedScale = 1
+        }
+        radialNoteID = nil
+        radialOrigin = nil
+        radialFinger = nil
+        hoveredAction = nil
+    }
+
+    private func action(at point: CGPoint, origin: CGPoint) -> NotePressAction? {
+        let below = origin.y < 190
+        return NotePressAction.allCases.first { action in
+            let offset = action.offset(belowFinger: below)
+            let center = CGPoint(x: origin.x + offset.width, y: origin.y + offset.height)
+            return hypot(point.x - center.x, point.y - center.y) < 40
+        }
+    }
+
+    private func tilt(for note: Note) -> (x: Double, y: Double) {
+        guard radialNoteID == note.persistentModelID,
+              let finger = radialFinger,
+              let frame = noteFrames[note.persistentModelID] else {
+            return (0, 0)
+        }
+        let dx = (finger.x - frame.midX) / max(frame.width, 1)
+        let dy = (finger.y - frame.midY) / max(frame.height, 1)
+        return (
+            x: Double(max(-14, min(14, -dy * 22))),
+            y: Double(max(-18, min(18, dx * 28)))
+        )
     }
 
     private func scrub(to progress: CGFloat, proxy: ScrollViewProxy) {
         guard !notes.isEmpty else { return }
 
-        if !isDraggingRail {
-            endEditing()
+        if !isDraggingRail, editor.editingID == nil {
             railImpactToken += 1
         }
 
@@ -202,7 +391,9 @@ struct TimelineView: View {
     }
 
     private var firstNoteTopInset: CGFloat {
-        let height = timelineHeight > 0 ? timelineHeight : 700
+        let height = restingTimelineHeight > 0
+            ? restingTimelineHeight
+            : (timelineHeight > 0 ? timelineHeight : 700)
         return height * 0.25
     }
 
@@ -218,17 +409,10 @@ struct TimelineView: View {
     }
 
     private func startNewNote() {
-        swipedNoteID = nil
         let note = Note(text: "")
         modelContext.insert(note)
         persist()
-        pendingFocusID = note.persistentModelID
-    }
-
-    private func endEditing() {
-        focusedNoteID = nil
-        swipedNoteID = nil
-        persist()
+        editor.begin(note.persistentModelID, scrollIntoView: false)
     }
 
     private func persist() {
@@ -236,179 +420,94 @@ struct TimelineView: View {
     }
 
     private func deleteNote(_ note: Note) {
-        if focusedNoteID == note.persistentModelID {
-            focusedNoteID = nil
+        if editor.editingID == note.persistentModelID {
+            editor.end()
         }
-        if swipedNoteID == note.persistentModelID {
-            swipedNoteID = nil
-        }
+        recentDelete.remember(note)
         modelContext.delete(note)
         persist()
     }
 }
 
-private struct NoteRow: View {
-    @Bindable var note: Note
-    @FocusState.Binding var focusedNoteID: PersistentIdentifier?
-    @Binding var pendingFocusID: PersistentIdentifier?
-    @Binding var swipedNoteID: PersistentIdentifier?
-    var onDelete: () -> Void
+private struct NoteFramePreference: PreferenceKey {
+    static var defaultValue: [PersistentIdentifier: CGRect] = [:]
 
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var swipeOffset: CGFloat = 0
-
-    private var isFocused: Bool {
-        focusedNoteID == note.persistentModelID
+    static func reduce(
+        value: inout [PersistentIdentifier: CGRect],
+        nextValue: () -> [PersistentIdentifier: CGRect]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
+}
 
-    private var isSwipedOpen: Bool {
-        swipedNoteID == note.persistentModelID
-    }
-
-    private var isThisNoteSwiping: Bool {
-        abs(swipeOffset) > 1
-    }
+private struct NoteDimOverlay: View {
+    var noteFrame: CGRect
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            swipeActions
-                .zIndex(0)
+        GeometryReader { geometry in
+            let origin = geometry.frame(in: .global)
+            let hole = CGRect(
+                x: noteFrame.minX - origin.minX,
+                y: noteFrame.minY - origin.minY,
+                width: noteFrame.width,
+                height: noteFrame.height
+            )
 
-            noteContent
-                .padding(.vertical, 22)
-                .padding(.trailing, 8)
-                .background {
-                    if isThisNoteSwiping {
+            Color.black.opacity(0.42)
+                .mask {
+                    ZStack {
+                        Rectangle()
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(noteBackground)
-                    } else {
-                        Color(.systemBackground)
+                            .frame(width: hole.width + 12, height: hole.height + 6)
+                            .position(x: hole.midX, y: hole.midY)
+                            .blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
+                }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct NoteRow: View {
+    @Bindable var note: Note
+    var isEditing: Bool
+    var editor: TimelineEditor
+    var onTap: () -> Void
+    var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
+    @State private var editorHeight: CGFloat = 22
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if isEditing {
+                NoteTextView(note: note, editor: editor) { height in
+                    if abs(editorHeight - height) > 0.5 {
+                        editorHeight = height
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: isThisNoteSwiping ? 16 : 0, style: .continuous))
-                .zIndex(1)
-                .offset(x: swipeOffset)
-                .gesture(isFocused ? nil : swipeGesture)
-        }
-        .onAppear {
-            focusIfPending()
-            swipeOffset = isSwipedOpen ? -NoteSwipeMetrics.openDistance : 0
-        }
-        .onChange(of: pendingFocusID) {
-            focusIfPending()
-        }
-        .onChange(of: focusedNoteID) { _, newValue in
-            if newValue != note.persistentModelID {
-                try? note.modelContext?.save()
+                .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
+            } else {
+                Text(note.text.isEmpty ? " " : note.text)
+                    .font(.system(.body, design: .serif))
+                    .foregroundStyle(note.text.isEmpty ? .clear : .primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(8)
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
             }
-            if newValue != nil {
-                closeSwipe()
-            }
-        }
-        .onChange(of: isSwipedOpen) { _, open in
-            withAnimation(NoteSwipeMetrics.spring) {
-                swipeOffset = open ? -NoteSwipeMetrics.openDistance : 0
-            }
-        }
-    }
-
-    private var noteBackground: Color {
-        guard isThisNoteSwiping else { return Color(.systemBackground) }
-        return colorScheme == .dark
-            ? Color.white.opacity(0.12)
-            : Color(white: 0.96)
-    }
-
-    private var noteContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("", text: $note.text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(.body, design: .serif))
-                .foregroundStyle(.primary)
-                .focused($focusedNoteID, equals: note.persistentModelID)
-                .lineLimit(isFocused ? 50 : 8)
-                .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
 
             Text(note.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-    }
-
-    private var swipeActions: some View {
-        HStack(spacing: NoteSwipeMetrics.buttonSpacing) {
-            swipeButton(systemName: "doc.on.doc", color: Color(white: 0.56)) {
-                UIPasteboard.general.string = note.text
-                closeSwipe()
-            }
-
-            swipeButton(systemName: "trash.fill", color: .red) {
-                onDelete()
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay {
+            if !isEditing {
+                NoteTouchSurface(onTap: onTap, onLongPress: onLongPress)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .padding(.trailing, 2)
-        .opacity(min(1, abs(swipeOffset) / 56.0))
     }
-
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .onChanged { value in
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                guard abs(horizontal) > abs(vertical) else { return }
-
-                if swipedNoteID != note.persistentModelID {
-                    swipedNoteID = nil
-                }
-
-                let base = isSwipedOpen ? -NoteSwipeMetrics.openDistance : 0
-                swipeOffset = min(0, max(-NoteSwipeMetrics.openDistance - 28, base + horizontal))
-            }
-            .onEnded { _ in
-                let shouldOpen = swipeOffset < -(NoteSwipeMetrics.openDistance * 0.35)
-                withAnimation(NoteSwipeMetrics.spring) {
-                    if shouldOpen {
-                        swipeOffset = -NoteSwipeMetrics.openDistance
-                        swipedNoteID = note.persistentModelID
-                        focusedNoteID = nil
-                    } else {
-                        closeSwipe()
-                    }
-                }
-            }
-    }
-
-    private func swipeButton(systemName: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: NoteSwipeMetrics.buttonSize, height: NoteSwipeMetrics.buttonSize)
-                .background(color, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(systemName == "trash.fill" ? "Delete" : "Copy")
-    }
-
-    private func closeSwipe() {
-        swipedNoteID = nil
-        withAnimation(NoteSwipeMetrics.spring) {
-            swipeOffset = 0
-        }
-    }
-
-    private func focusIfPending() {
-        guard pendingFocusID == note.persistentModelID else { return }
-        focusedNoteID = note.persistentModelID
-        pendingFocusID = nil
-    }
-}
-
-private enum NoteSwipeMetrics {
-    static let buttonSize: CGFloat = 40
-    static let buttonSpacing: CGFloat = 14
-    static let openDistance: CGFloat = 132
-    static let spring = Animation.spring(duration: 0.34, bounce: 0.12)
 }
 
 private enum TimelineAnchor: Hashable {
@@ -434,7 +533,7 @@ private struct TimelineScrollState: Equatable {
 
 #Preview("Timeline") {
     let container = try! ModelContainer(
-        for: Note.self,
+        for: Note.self, Board.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     let context = container.mainContext
@@ -448,11 +547,12 @@ private struct TimelineScrollState: Equatable {
 
     return TimelineView()
         .modelContainer(container)
+        .environment(RecentDelete())
 }
 
 #Preview("Time Rail") {
     let container = try! ModelContainer(
-        for: Note.self,
+        for: Note.self, Board.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     let context = container.mainContext
@@ -474,4 +574,5 @@ private struct TimelineScrollState: Equatable {
 
     return TimelineView()
         .modelContainer(container)
+        .environment(RecentDelete())
 }
