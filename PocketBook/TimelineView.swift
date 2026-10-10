@@ -32,6 +32,7 @@ struct TimelineView: View {
     @State private var hoveredAction: NotePressAction?
     @State private var pressedScale: CGFloat = 1
     @State private var dimFrame: CGRect = .zero
+    @State private var menuBounds: CGRect = .zero
     @State private var boardPickerNote: Note?
 
     private var isEditing: Bool { editor.editingID != nil }
@@ -104,7 +105,7 @@ struct TimelineView: View {
         ScrollViewReader { proxy in
             List {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Jot away, DrBoss...")
+                    Text("Stream")
                         .font(.system(.title2, design: .serif).weight(.bold))
                         .foregroundStyle(.primary)
                         .padding(.top, 28)
@@ -113,7 +114,7 @@ struct TimelineView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: firstNoteTopInset, alignment: .topLeading)
                 .id(TimelineAnchor.top)
-                .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 0, trailing: 20))
+                .listRowInsets(EdgeInsets(top: 8, leading: 28, bottom: 0, trailing: 36))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 ForEach(notes) { note in
@@ -148,9 +149,9 @@ struct TimelineView: View {
                     }
                     .listRowInsets(EdgeInsets(
                         top: 2,
-                        leading: 20,
+                        leading: 28,
                         bottom: 2,
-                        trailing: 12
+                        trailing: 36
                     ))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color(.systemBackground))
@@ -212,7 +213,11 @@ struct TimelineView: View {
             }
             .overlay {
                 if let radialOrigin {
-                    RadialActionMenu(origin: radialOrigin, hovered: hoveredAction)
+                    RadialActionMenu(
+                        origin: radialOrigin,
+                        hovered: hoveredAction,
+                        container: menuBounds
+                    )
                         .allowsHitTesting(false)
                 }
             }
@@ -225,6 +230,15 @@ struct TimelineView: View {
                     proxy.scrollTo(TimelineAnchor.top, anchor: .top)
                 }
             }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: MenuBoundsPreference.self,
+                        value: geometry.frame(in: .global)
+                    )
+                }
+            }
+            .onPreferenceChange(MenuBoundsPreference.self) { menuBounds = $0 }
             .onPreferenceChange(NoteFramePreference.self) { frames in
                 noteFrames = frames
                 if let radialNoteID, let frame = frames[radialNoteID] {
@@ -340,12 +354,18 @@ struct TimelineView: View {
     }
 
     private func action(at point: CGPoint, origin: CGPoint) -> NotePressAction? {
-        let below = origin.y < 190
-        return NotePressAction.allCases.first { action in
-            let offset = action.offset(belowFinger: below)
-            let center = CGPoint(x: origin.x + offset.width, y: origin.y + offset.height)
-            return hypot(point.x - center.x, point.y - center.y) < 40
+        let bounds = menuBounds.width > 1 ? menuBounds : UIScreen.main.bounds
+        let centers = RadialFan.placement(origin: origin, in: bounds).centers
+        var nearest: (action: NotePressAction, distance: CGFloat)?
+        for action in NotePressAction.allCases {
+            guard let center = centers[action] else { continue }
+            let distance = hypot(point.x - center.x, point.y - center.y)
+            guard distance < 36 else { continue }
+            if nearest == nil || distance < nearest!.distance {
+                nearest = (action, distance)
+            }
         }
+        return nearest?.action
     }
 
     private func tilt(for note: Note) -> (x: Double, y: Double) {
@@ -426,6 +446,14 @@ struct TimelineView: View {
         recentDelete.remember(note)
         modelContext.delete(note)
         persist()
+    }
+}
+
+private struct MenuBoundsPreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }
 

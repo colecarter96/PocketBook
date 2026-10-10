@@ -17,6 +17,7 @@ final class TimelineEditor {
     @ObservationIgnored private var wantsScroll = false
     @ObservationIgnored private var didPlace = false
     @ObservationIgnored private var reclaimCount = 0
+    @ObservationIgnored private var placeObserver: NSObjectProtocol?
 
     func begin(_ id: PersistentIdentifier, scrollIntoView: Bool) {
         reclaimCount = 0
@@ -44,6 +45,7 @@ final class TimelineEditor {
 
     func end() {
         activationToken += 1
+        removePlaceObserver()
         let previous = editingID
         editingID = nil
         wantsScroll = false
@@ -84,20 +86,61 @@ final class TimelineEditor {
         view.enclosingScrollView()?.keyboardDismissMode = .none
         let end = view.endOfDocument
         view.selectedTextRange = view.textRange(from: end, to: end)
-        guard view.becomeFirstResponder() else { return }
-        placeIfNeeded(view)
-    }
-
-    private func placeIfNeeded(_ view: UITextView) {
-        guard wantsScroll, !didPlace else { return }
+        let shouldPlace = wantsScroll && !didPlace
+        if shouldPlace {
+            armKeyboardScroll(for: view)
+        }
+        guard view.becomeFirstResponder() else {
+            if shouldPlace {
+                removePlaceObserver()
+            }
+            return
+        }
+        guard shouldPlace else { return }
         didPlace = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak view] in
-            guard let view, view.isFirstResponder else { return }
-            Self.scrollIntoQuarter(view)
+        let token = activationToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak view] in
+            guard let self, let view, token == self.activationToken, view.isFirstResponder else { return }
+            guard self.placeObserver != nil else { return }
+            self.removePlaceObserver()
+            self.scrollIntoQuarter(view, notification: nil)
         }
     }
 
-    private static func scrollIntoQuarter(_ view: UIView) {
+    private func armKeyboardScroll(for view: UITextView) {
+        removePlaceObserver()
+        let token = activationToken
+        placeObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self, weak view] notification in
+            MainActor.assumeIsolated {
+                guard let self, let view else { return }
+                guard token == self.activationToken, view.isFirstResponder else { return }
+                guard self.keyboardIsShowing(notification, around: view) else { return }
+                self.removePlaceObserver()
+                self.scrollIntoQuarter(view, notification: notification)
+            }
+        }
+    }
+
+    private func keyboardIsShowing(_ notification: Notification, around view: UIView) -> Bool {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return true
+        }
+        let height = view.window?.bounds.height ?? frame.maxY
+        return frame.minY < height - 20
+    }
+
+    private func removePlaceObserver() {
+        if let placeObserver {
+            NotificationCenter.default.removeObserver(placeObserver)
+        }
+        placeObserver = nil
+    }
+
+    private func scrollIntoQuarter(_ view: UIView, notification: Notification?) {
         guard let scrollView = view.enclosingScrollView() else { return }
         let rect = view.convert(view.bounds, to: scrollView)
         let target = rect.origin.y - (scrollView.bounds.height * 0.25)
@@ -106,7 +149,14 @@ final class TimelineEditor {
         let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + inset.bottom)
         let y = min(max(target, minY), maxY)
         guard abs(y - scrollView.contentOffset.y) > 8 else { return }
-        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: true)
+
+        let duration = notification?.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.22
+        let curveRaw = notification?.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt
+            ?? UInt(UIView.AnimationCurve.easeInOut.rawValue)
+        let options = UIView.AnimationOptions(rawValue: curveRaw << 16).union(.beginFromCurrentState)
+        UIView.animate(withDuration: duration, delay: 0, options: options) {
+            scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: y)
+        }
     }
 }
 
