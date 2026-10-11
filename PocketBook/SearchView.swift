@@ -5,24 +5,23 @@
 //  Created by Cole Carter on 10/7/26.
 //
 
+import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
 
 struct SearchView: View {
-    var isSelected = false
-    var focusToken = 0
+    @Binding var query: String
+    var isFieldFocused: Bool
+    var recents: [String]
+    var onPickRecent: (String) -> Void
+    var onOpenNote: () -> Void
 
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
-    @State private var query = ""
-    @FocusState private var isSearchFocused: Bool
+    @State private var openedNoteID: PersistentIdentifier?
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var isSearching: Bool {
-        isSearchFocused || !trimmedQuery.isEmpty
     }
 
     private var matches: [Note] {
@@ -32,150 +31,86 @@ struct SearchView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if !isSearching {
-                    dismissibleFill(minHeight: 80)
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Looking for something?")
+                    .font(.system(.title2, design: .serif).weight(.bold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: showsPromptCentered ? .center : .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, showsPromptCentered ? 72 : 28)
+                    .padding(.bottom, 18)
 
-                VStack(spacing: isSearching ? 20 : 28) {
-                    Text("Looking for something?")
-                        .font(.system(.title2, design: .serif).weight(.bold))
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: isSearching ? .leading : .center)
-                        .padding(.top, isSearching ? 28 : 0)
-                        .onTapGesture(perform: exitSearch)
-
-                    searchPill
-                }
-                .padding(.horizontal, 24)
-
-                if isSearching {
+                if !trimmedQuery.isEmpty {
                     searchResults
+                } else if !isFieldFocused && !recents.isEmpty {
+                    recentSearches
                 } else {
-                    dismissibleFill()
-                    dismissibleFill()
+                    Spacer()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color(.systemBackground))
             .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if isSearchFocused {
-                    keyboardDismissBar
+            .toolbar(.hidden, for: .tabBar)
+            .navigationDestination(item: $openedNoteID) { id in
+                if let note = notes.first(where: { $0.persistentModelID == id }) {
+                    NoteDetailView(note: note)
                 }
-            }
-            .animation(.easeOut(duration: 0.09), value: isSearching)
-            .onAppear {
-                if isSelected {
-                    focusSearch()
-                }
-            }
-            .onChange(of: isSelected) { _, selected in
-                if selected {
-                    focusSearch()
-                } else {
-                    isSearchFocused = false
-                }
-            }
-            .onChange(of: focusToken) { _, _ in
-                focusSearch()
             }
         }
         .tint(.primary)
     }
 
-    private func focusSearch() {
-        isSearchFocused = true
-        Task { @MainActor in
-            isSearchFocused = true
-        }
+    private var showsPromptCentered: Bool {
+        trimmedQuery.isEmpty && (isFieldFocused || recents.isEmpty)
     }
 
-    private var keyboardDismissBar: some View {
-        HStack {
-            Spacer()
-            Button(action: exitSearch) {
-                Image(systemName: "chevron.down")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 44, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Hide Keyboard")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .background(Color(.secondarySystemBackground))
-    }
-
-    private func dismissibleFill(minHeight: CGFloat = 0) -> some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .frame(minHeight: minHeight)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: exitSearch)
-    }
-
-    private func exitSearch() {
-        isSearchFocused = false
-        query = ""
-    }
-
-    private var searchPill: some View {
-        HStack(spacing: 12) {
-            Button {
-                isSearchFocused = true
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-
-            TextField("Search all notes", text: $query)
-                .font(.system(.body, design: .serif))
-                .foregroundStyle(.primary)
-                .focused($isSearchFocused)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
+    private var recentSearches: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(recents, id: \.self) { term in
+                    Button {
+                        onPickRecent(term)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.body)
+                                .foregroundStyle(.tertiary)
+                            Text(term)
+                                .font(.system(.body, design: .serif))
+                                .foregroundStyle(.primary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear")
             }
+            .padding(.bottom, 96)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 16)
-        .background(Color(.secondarySystemBackground), in: Capsule())
-        .shadow(color: .black.opacity(isSearchFocused ? 0.08 : 0.05), radius: isSearchFocused ? 18 : 12, y: 4)
+        .scrollIndicators(.hidden)
     }
 
     @ViewBuilder
     private var searchResults: some View {
-        if trimmedQuery.isEmpty {
-            dismissibleFill()
-        } else if matches.isEmpty {
+        if matches.isEmpty {
             Text("No matches")
                 .font(.system(.body, design: .serif))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: exitSearch)
         } else {
             List(matches) { note in
-                NavigationLink {
-                    NoteDetailView(note: note)
+                Button {
+                    onOpenNote()
+                    openedNoteID = note.persistentModelID
                 } label: {
                     SearchResultRow(note: note, query: trimmedQuery)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color(.systemBackground))
@@ -183,8 +118,9 @@ struct SearchView: View {
             .listStyle(.plain)
             .scrollIndicators(.hidden)
             .scrollContentBackground(.hidden)
-            .scrollDismissesKeyboard(.immediately)
-            .padding(.top, 12)
+            .scrollDismissesKeyboard(.never)
+            .contentMargins(.bottom, 96, for: .scrollContent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -249,15 +185,53 @@ struct NoteDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(RecentDelete.self) private var recentDelete
+    @Environment(VoiceMemoController.self) private var voice
+    @Environment(\.pocketNavHidden) private var pocketNavHidden
     @State private var isConfirmingDelete = false
     @State private var showingBoardPicker = false
+    @State private var previewImageName: String?
+    @State private var isArrangingPhotos = false
+    @State private var showLibrary = false
+    @State private var libraryItems: [PhotosPickerItem] = []
+    @State private var showCamera = false
+    @State private var transcriptEditor = TimelineEditor()
+
+    private var isRecording: Bool {
+        voice.recordingNoteID == note.persistentModelID
+    }
 
     var body: some View {
-        TextField("", text: $note.text, axis: .vertical)
-            .textFieldStyle(.plain)
-            .font(.system(.title3, design: .serif))
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        VStack(alignment: .leading, spacing: 8) {
+            if note.audioFileName != nil || isRecording {
+                HStack(spacing: 12) {
+                    VoiceMemoBar(note: note)
+                    if isRecording {
+                        Button("Stop") {
+                            voice.toggleRecording(for: note, editor: transcriptEditor)
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+            }
+
+            NoteImageStrip(
+                fileNames: note.imageFileNames,
+                isArranging: isArrangingPhotos,
+                onOpen: { previewImageName = $0 },
+                onDelete: { removeImage($0) },
+                onFinishArrange: { isArrangingPhotos = false }
+            )
+            .padding(.horizontal)
+
+            TextField("", text: $note.text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(.title3, design: .serif))
+                .padding(.horizontal)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -270,6 +244,33 @@ struct NoteDetailView: View {
                     Menu {
                         Button("Copy", systemImage: "doc.on.doc") {
                             UIPasteboard.general.string = note.text
+                        }
+                        if isRecording {
+                            Button("Stop Transcription", systemImage: "stop.fill") {
+                                voice.toggleRecording(for: note, editor: transcriptEditor)
+                            }
+                        } else if note.audioFileName == nil {
+                            Button("Add Transcription", systemImage: "mic") {
+                                voice.toggleRecording(for: note, editor: transcriptEditor)
+                            }
+                        } else {
+                            Button("Remove Transcription", systemImage: "mic.slash") {
+                                removeMemo()
+                            }
+                        }
+                        Button("Photo Library", systemImage: "photo") {
+                            libraryItems = []
+                            showLibrary = true
+                        }
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            Button("Take Photo", systemImage: "camera") {
+                                showCamera = true
+                            }
+                        }
+                        if !note.imageFileNames.isEmpty {
+                            Button("Remove Photos", systemImage: "photo.badge.minus") {
+                                isArrangingPhotos = true
+                            }
                         }
                         Button("Boards", systemImage: "square.stack") {
                             showingBoardPicker = true
@@ -300,8 +301,64 @@ struct NoteDetailView: View {
             .sheet(isPresented: $showingBoardPicker) {
                 BoardPickerSheet(note: note)
             }
+            .photosPicker(
+                isPresented: $showLibrary,
+                selection: $libraryItems,
+                maxSelectionCount: 10,
+                matching: .images
+            )
+            .onChange(of: showLibrary) { _, isShowing in
+                guard !isShowing else { return }
+                let picked = libraryItems
+                guard !picked.isEmpty else { return }
+                Task {
+                    await NoteImageStore.importPhotos(picked, into: note)
+                    libraryItems = []
+                }
+            }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker { image in
+                    if let image {
+                        NoteImageStore.append(image, to: note)
+                        try? modelContext.save()
+                    }
+                    showCamera = false
+                }
+                .ignoresSafeArea()
+            }
+            .onAppear {
+                pocketNavHidden.wrappedValue = true
+            }
             .onDisappear {
+                voice.stopRecordingIfCurrent(note.persistentModelID)
+                pocketNavHidden.wrappedValue = false
                 try? modelContext.save()
             }
+            .overlay {
+                if let previewImageName {
+                    NoteImagePreview(fileName: previewImageName) {
+                        self.previewImageName = nil
+                    }
+                }
+            }
+    }
+
+    private func removeMemo() {
+        voice.stopPlayback(of: note)
+        VoiceMemoStore.delete(note.audioFileName)
+        note.audioFileName = nil
+        note.audioDuration = 0
+        try? modelContext.save()
+    }
+
+    private func removeImage(_ fileName: String) {
+        var names = note.imageFileNames
+        names.removeAll { $0 == fileName }
+        note.imageFileNames = names
+        NoteImageStore.delete(fileName)
+        try? modelContext.save()
+        if names.isEmpty {
+            isArrangingPhotos = false
+        }
     }
 }

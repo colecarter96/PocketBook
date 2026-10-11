@@ -255,6 +255,9 @@
 				DEVELOPMENT_TEAM = 97MWT575V3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -284,6 +287,9 @@
 				DEVELOPMENT_TEAM = 97MWT575V3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

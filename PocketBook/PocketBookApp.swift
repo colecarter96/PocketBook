@@ -37,12 +37,34 @@ final class RecentDelete {
         var text: String
         var createdAt: Date
         var boards: [Board]
+        var audioFileName: String?
+        var audioDuration: Double
+        var imageFileNames: [String]
+        var revisitDone: Bool
+        var revisitAfter: Date?
     }
 
     var canUndo: Bool { snapshot != nil }
 
     func remember(_ note: Note) {
-        snapshot = Snapshot(text: note.text, createdAt: note.createdAt, boards: note.boards)
+        if let previous = snapshot {
+            if previous.audioFileName != note.audioFileName {
+                VoiceMemoStore.delete(previous.audioFileName)
+            }
+            for name in previous.imageFileNames {
+                NoteImageStore.delete(name)
+            }
+        }
+        snapshot = Snapshot(
+            text: note.text,
+            createdAt: note.createdAt,
+            boards: note.boards,
+            audioFileName: note.audioFileName,
+            audioDuration: note.audioDuration,
+            imageFileNames: note.imageFileNames,
+            revisitDone: note.revisitDone,
+            revisitAfter: note.revisitAfter
+        )
     }
 
     func undo(in context: ModelContext) {
@@ -50,6 +72,11 @@ final class RecentDelete {
         let note = Note(text: snapshot.text, createdAt: snapshot.createdAt)
         context.insert(note)
         note.boards = snapshot.boards
+        note.audioFileName = snapshot.audioFileName
+        note.audioDuration = snapshot.audioDuration
+        note.imageFileNames = snapshot.imageFileNames
+        note.revisitDone = snapshot.revisitDone
+        note.revisitAfter = snapshot.revisitAfter
         try? context.save()
         self.snapshot = nil
     }
@@ -58,54 +85,159 @@ final class RecentDelete {
 enum PocketTab: Hashable {
     case timeline
     case search
+    case revisit
     case boards
+}
+
+private struct PocketNavHiddenKey: EnvironmentKey {
+    static let defaultValue: Binding<Bool> = .constant(false)
+}
+
+extension EnvironmentValues {
+    var pocketNavHidden: Binding<Bool> {
+        get { self[PocketNavHiddenKey.self] }
+        set { self[PocketNavHiddenKey.self] = newValue }
+    }
 }
 
 struct RootView: View {
     @State private var recentDelete = RecentDelete()
+    @State private var voiceMemos = VoiceMemoController()
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: PocketTab = .timeline
-    @State private var searchFocusToken = 0
     @State private var timelineTopToken = 0
+    @State private var searchBarOpen = false
+    @State private var searchQuery = ""
+    @State private var recentSearches = RecentSearches.load()
+    @State private var keyboardOverlap: CGFloat = 0
+    @State private var hidesNav = false
+    @FocusState private var searchFieldFocused: Bool
 
     init() {
         _ = InstantTabSwitch.disable
     }
 
+    private var navDropsBehindKeyboard: Bool {
+        keyboardOverlap > 0 && !searchFieldFocused
+    }
+
     var body: some View {
-        TabView(selection: $selectedTab.animation(nil)) {
-            Tab("Timeline", systemImage: "house", value: PocketTab.timeline) {
-                TimelineView(scrollToTopToken: timelineTopToken)
-            }
+        ZStack(alignment: .bottom) {
+            TabView(selection: $selectedTab.animation(nil)) {
+                Tab("Timeline", systemImage: "house", value: PocketTab.timeline) {
+                    TimelineView(scrollToTopToken: timelineTopToken)
+                }
 
-            Tab("Search", systemImage: "magnifyingglass", value: PocketTab.search) {
-                SearchView(
-                    isSelected: selectedTab == .search,
-                    focusToken: searchFocusToken
-                )
-            }
+                Tab("Search", systemImage: "magnifyingglass", value: PocketTab.search) {
+                    SearchView(
+                        query: $searchQuery,
+                        isFieldFocused: searchFieldFocused,
+                        recents: recentSearches,
+                        onPickRecent: pickRecent,
+                        onOpenNote: dismissSearchKeyboard
+                    )
+                }
 
-            Tab("Boards", systemImage: "square.stack", value: PocketTab.boards) {
-                BoardsView()
+                Tab("Revisit", systemImage: "arrow.clockwise", value: PocketTab.revisit) {
+                    RevisitView()
+                }
+
+                Tab("Boards", systemImage: "square.stack", value: PocketTab.boards) {
+                    BoardsView()
+                }
+            }
+            .toolbar(.hidden, for: .tabBar)
+            .tint(.primary)
+            .animation(nil, value: selectedTab)
+
+            StreamNavBar(
+                selectedTab: selectedTab,
+                searchBarOpen: searchBarOpen,
+                query: $searchQuery,
+                isSearchFocused: $searchFieldFocused,
+                onSelect: selectTab,
+                onSubmit: commitSearch,
+                onCloseSearch: closeSearch
+            )
+            .padding(.bottom, navDropsBehindKeyboard ? 0 : 8)
+            .offset(y: navDropsBehindKeyboard ? keyboardOverlap : 0)
+            .opacity(hidesNav ? 0 : 1)
+            .allowsHitTesting(!hidesNav && !navDropsBehindKeyboard)
+        }
+        .environment(\.pocketNavHidden, $hidesNav)
+        .environment(recentDelete)
+        .environment(voiceMemos)
+        .task {
+            let notes = (try? modelContext.fetch(FetchDescriptor<Note>())) ?? []
+            var keptAudio = Set(notes.compactMap(\.audioFileName))
+            if let pending = recentDelete.snapshot?.audioFileName {
+                keptAudio.insert(pending)
+            }
+            VoiceMemoStore.deleteAll(except: keptAudio)
+
+            var keptImages = Set(notes.flatMap(\.imageFileNames))
+            if let pending = recentDelete.snapshot?.imageFileNames {
+                keptImages.formUnion(pending)
+            }
+            NoteImageStore.deleteAll(except: keptImages)
+        }
+        .onChange(of: searchFieldFocused) { _, focused in
+            if !focused {
+                commitSearch()
             }
         }
-        .tint(.primary)
-        .animation(nil, value: selectedTab)
-        .environment(recentDelete)
-        .background {
-            SearchTabTapCatcher(
-                onSearchTap: {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        selectedTab = .search
-                        searchFocusToken += 1
-                    }
-                },
-                onTimelineReselect: {
-                    guard selectedTab == .timeline else { return }
-                    timelineTopToken += 1
-                }
-            )
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = (note.object as? UIView)?.window?.windowScene?.screen.bounds.height
+                ?? UIApplication.shared.connectedScenes
+                    .compactMap { ($0 as? UIWindowScene)?.screen.bounds.height }
+                    .first
+                ?? frame.maxY
+            let overlap = max(0, screenHeight - frame.minY)
+            let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+            withAnimation(.easeInOut(duration: duration)) {
+                keyboardOverlap = overlap
+            }
+        }
+    }
+
+    private func selectTab(_ tab: PocketTab) {
+        if tab == .timeline, selectedTab == .timeline {
+            timelineTopToken += 1
+            return
+        }
+        if tab != .search {
+            searchFieldFocused = false
+        }
+        withAnimation(.easeOut(duration: 0.22)) {
+            searchBarOpen = tab == .search
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            selectedTab = tab
+        }
+    }
+
+    private func commitSearch() {
+        RecentSearches.remember(searchQuery, into: &recentSearches)
+    }
+
+    private func pickRecent(_ term: String) {
+        searchQuery = term
+        searchFieldFocused = false
+        RecentSearches.remember(term, into: &recentSearches)
+    }
+
+    private func dismissSearchKeyboard() {
+        searchFieldFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func closeSearch() {
+        dismissSearchKeyboard()
+        withAnimation(.easeOut(duration: 0.22)) {
+            searchBarOpen = false
         }
     }
 }
@@ -146,72 +278,3 @@ extension UITabBarController {
     }
 }
 
-private struct SearchTabTapCatcher: UIViewControllerRepresentable {
-    var onSearchTap: () -> Void
-    var onTimelineReselect: () -> Void
-
-    func makeUIViewController(context: Context) -> Catcher {
-        let catcher = Catcher()
-        catcher.onSearchTap = onSearchTap
-        catcher.onTimelineReselect = onTimelineReselect
-        return catcher
-    }
-
-    func updateUIViewController(_ catcher: Catcher, context: Context) {
-        catcher.onSearchTap = onSearchTap
-        catcher.onTimelineReselect = onTimelineReselect
-        catcher.attachIfNeeded()
-    }
-
-    final class Catcher: UIViewController, UIGestureRecognizerDelegate {
-        var onSearchTap: () -> Void = {}
-        var onTimelineReselect: () -> Void = {}
-        private weak var hookedTabBar: UITabBar?
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            attachIfNeeded()
-        }
-
-        func attachIfNeeded() {
-            DispatchQueue.main.async { [weak self] in
-                self?.hookTabBar()
-            }
-        }
-
-        private func hookTabBar() {
-            guard let tabBar = tabBarController?.tabBar, hookedTabBar !== tabBar else { return }
-            let tap = UITapGestureRecognizer(target: self, action: #selector(tabBarTapped(_:)))
-            tap.cancelsTouchesInView = false
-            tap.delegate = self
-            tabBar.addGestureRecognizer(tap)
-            hookedTabBar = tabBar
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            true
-        }
-
-        @objc private func tabBarTapped(_ gesture: UITapGestureRecognizer) {
-            guard let tabBar = hookedTabBar, gesture.state == .began else { return }
-            let point = gesture.location(in: tabBar)
-            let buttons = tabBar.subviews
-                .filter { $0 is UIControl && $0.bounds.width > 24 }
-                .sorted { $0.frame.minX < $1.frame.minX }
-            let hitSearch = buttons.count >= 2
-                ? buttons[1].frame.contains(point)
-                : point.x > tabBar.bounds.width / 3 && point.x < tabBar.bounds.width * 2 / 3
-            let hitTimeline = buttons.count >= 1
-                ? buttons[0].frame.contains(point)
-                : point.x < tabBar.bounds.width / 3
-            if hitSearch {
-                onSearchTap()
-            } else if hitTimeline {
-                onTimelineReselect()
-            }
-        }
-    }
-}

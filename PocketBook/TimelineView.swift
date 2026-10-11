@@ -7,6 +7,7 @@
 
 import SwiftData
 import SwiftUI
+import PhotosUI
 import UIKit
 
 struct TimelineView: View {
@@ -14,6 +15,7 @@ struct TimelineView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(RecentDelete.self) private var recentDelete
+    @Environment(VoiceMemoController.self) private var voiceMemos
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
 
     @State private var editor = TimelineEditor()
@@ -29,11 +31,18 @@ struct TimelineView: View {
     @State private var radialNoteID: PersistentIdentifier?
     @State private var radialOrigin: CGPoint?
     @State private var radialFinger: CGPoint?
+    @State private var radialActions: [NotePressAction] = []
     @State private var hoveredAction: NotePressAction?
     @State private var pressedScale: CGFloat = 1
     @State private var dimFrame: CGRect = .zero
     @State private var menuBounds: CGRect = .zero
     @State private var boardPickerNote: Note?
+    @State private var libraryNote: Note?
+    @State private var showLibrary = false
+    @State private var cameraNote: Note?
+    @State private var libraryItems: [PhotosPickerItem] = []
+    @State private var previewImageName: String?
+    @State private var editingPhotosNoteID: PersistentIdentifier?
 
     private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
@@ -50,6 +59,7 @@ struct TimelineView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
             .overlay(alignment: .bottomTrailing) {
                 VStack(alignment: .trailing, spacing: 14) {
                     if recentDelete.canUndo {
@@ -68,9 +78,50 @@ struct TimelineView: View {
                     }
                 }
                 .padding(.trailing, 30)
-                .padding(.bottom, 32)
+                .padding(.bottom, 78)
             }
             .scrollDismissesKeyboard(.never)
+            .photosPicker(
+                isPresented: $showLibrary,
+                selection: $libraryItems,
+                maxSelectionCount: 10,
+                matching: .images
+            )
+            .onChange(of: showLibrary) { _, isShowing in
+                guard !isShowing, let note = libraryNote else { return }
+                let picked = libraryItems
+                libraryNote = nil
+                guard !picked.isEmpty else {
+                    libraryItems = []
+                    return
+                }
+                Task {
+                    await NoteImageStore.importPhotos(picked, into: note)
+                    libraryItems = []
+                }
+            }
+            .fullScreenCover(
+                isPresented: Binding(
+                    get: { cameraNote != nil },
+                    set: { if !$0 { cameraNote = nil } }
+                )
+            ) {
+                CameraPicker { image in
+                    if let image, let note = cameraNote {
+                        NoteImageStore.append(image, to: note)
+                        try? note.modelContext?.save()
+                    }
+                    cameraNote = nil
+                }
+                .ignoresSafeArea()
+            }
+            .overlay {
+                if let previewImageName {
+                    NoteImagePreview(fileName: previewImageName) {
+                        self.previewImageName = nil
+                    }
+                }
+            }
         }
         .sensoryFeedback(.selection, trigger: hapticNoteIndex)
         .sensoryFeedback(.impact(weight: .heavy), trigger: railImpactToken)
@@ -125,7 +176,17 @@ struct TimelineView: View {
                         onTap: { edit(note) },
                         onLongPress: { state, point in
                             handlePress(state, at: point, noteID: note.persistentModelID)
-                        }
+                        },
+                        onLibrary: {
+                            libraryNote = note
+                            libraryItems = []
+                            showLibrary = true
+                        },
+                        onCamera: { cameraNote = note },
+                        onOpenImage: { previewImageName = $0 },
+                        isArrangingPhotos: editingPhotosNoteID == note.persistentModelID,
+                        onDeleteImage: { removeImage($0, from: note) },
+                        onFinishPhotoEdit: { editingPhotosNoteID = nil }
                     )
                     .id(note.persistentModelID)
                     .scaleEffect(radialNoteID == note.persistentModelID ? pressedScale : 1)
@@ -215,6 +276,7 @@ struct TimelineView: View {
                 if let radialOrigin {
                     RadialActionMenu(
                         origin: radialOrigin,
+                        actions: radialActions,
                         hovered: hoveredAction,
                         container: menuBounds
                     )
@@ -308,6 +370,7 @@ struct TimelineView: View {
             dimFrame = frame
         }
         radialNoteID = noteID
+        radialActions = menuActions(for: noteID)
         radialOrigin = point
         radialFinger = point
         hoveredAction = nil
@@ -335,6 +398,10 @@ struct TimelineView: View {
             UIPasteboard.general.string = note.text
         case .board:
             boardPickerNote = note
+        case .memo:
+            removeMemo(from: note)
+        case .photos:
+            editingPhotosNoteID = note.persistentModelID
         case .delete:
             deleteNote(note)
         }
@@ -348,6 +415,7 @@ struct TimelineView: View {
             pressedScale = 1
         }
         radialNoteID = nil
+        radialActions = []
         radialOrigin = nil
         radialFinger = nil
         hoveredAction = nil
@@ -355,9 +423,9 @@ struct TimelineView: View {
 
     private func action(at point: CGPoint, origin: CGPoint) -> NotePressAction? {
         let bounds = menuBounds.width > 1 ? menuBounds : UIScreen.main.bounds
-        let centers = RadialFan.placement(origin: origin, in: bounds).centers
+        let centers = RadialFan.placement(origin: origin, actions: radialActions, in: bounds).centers
         var nearest: (action: NotePressAction, distance: CGFloat)?
-        for action in NotePressAction.allCases {
+        for action in radialActions {
             guard let center = centers[action] else { continue }
             let distance = hypot(point.x - center.x, point.y - center.y)
             guard distance < 36 else { continue }
@@ -366,6 +434,41 @@ struct TimelineView: View {
             }
         }
         return nearest?.action
+    }
+
+    private func menuActions(for noteID: PersistentIdentifier) -> [NotePressAction] {
+        guard let note = notes.first(where: { $0.persistentModelID == noteID }) else {
+            return [.copy, .board, .delete]
+        }
+        var actions: [NotePressAction] = [.copy]
+        if note.audioFileName != nil {
+            actions.append(.memo)
+        }
+        actions.append(.board)
+        if !note.imageFileNames.isEmpty {
+            actions.append(.photos)
+        }
+        actions.append(.delete)
+        return actions
+    }
+
+    private func removeMemo(from note: Note) {
+        voiceMemos.stopPlayback(of: note)
+        VoiceMemoStore.delete(note.audioFileName)
+        note.audioFileName = nil
+        note.audioDuration = 0
+        persist()
+    }
+
+    private func removeImage(_ fileName: String, from note: Note) {
+        var names = note.imageFileNames
+        names.removeAll { $0 == fileName }
+        note.imageFileNames = names
+        NoteImageStore.delete(fileName)
+        persist()
+        if names.isEmpty {
+            editingPhotosNoteID = nil
+        }
     }
 
     private func tilt(for note: Note) -> (x: Double, y: Double) {
@@ -503,25 +606,48 @@ private struct NoteRow: View {
     var editor: TimelineEditor
     var onTap: () -> Void
     var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
+    var onLibrary: () -> Void
+    var onCamera: () -> Void
+    var onOpenImage: (String) -> Void
+    var isArrangingPhotos: Bool
+    var onDeleteImage: (String) -> Void
+    var onFinishPhotoEdit: () -> Void
+    @Environment(VoiceMemoController.self) private var voice
     @State private var editorHeight: CGFloat = 22
+    @State private var hitFrames = NoteHitFrames()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if isEditing {
-                NoteTextView(note: note, editor: editor) { height in
+                NoteTextView(note: note, editor: editor, onHeight: { height in
                     if abs(editorHeight - height) > 0.5 {
                         editorHeight = height
                     }
-                }
+                }, onLibrary: onLibrary, onCamera: onCamera)
                 .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
             } else {
                 Text(note.text.isEmpty ? " " : note.text)
                     .font(.system(.body, design: .serif))
                     .foregroundStyle(note.text.isEmpty ? .clear : .primary)
                     .multilineTextAlignment(.leading)
-                    .lineLimit(8)
+                    .lineLimit(note.audioFileName == nil ? 8 : 4)
                     .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
             }
+
+            VoiceMemoBar(note: note)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: NoteHitPreference.self,
+                            value: NoteHitFrames(memo: geometry.frame(in: .global))
+                        )
+                    }
+                }
+            NoteImageStrip(
+                fileNames: note.imageFileNames,
+                isArranging: isArrangingPhotos,
+                onOpen: onOpenImage
+            )
 
             Text(note.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                 .font(.caption)
@@ -531,10 +657,36 @@ private struct NoteRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay {
             if !isEditing {
-                NoteTouchSurface(onTap: onTap, onLongPress: onLongPress)
+                NoteTouchSurface(onTap: handleCardTap, onLongPress: onLongPress)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onPreferenceChange(NoteHitPreference.self) { hitFrames = $0 }
+    }
+
+    private func handleCardTap(_ point: CGPoint) {
+        if isArrangingPhotos, hitFrames.check.insetBy(dx: -8, dy: -8).contains(point) {
+            onFinishPhotoEdit()
+            return
+        }
+        if isArrangingPhotos {
+            for (fileName, frame) in hitFrames.images {
+                let center = CGPoint(x: frame.maxX - 15, y: frame.minY + 15)
+                if hypot(point.x - center.x, point.y - center.y) < 22 {
+                    onDeleteImage(fileName)
+                    return
+                }
+            }
+        }
+        if let fileName = hitFrames.images.first(where: { $0.value.insetBy(dx: -6, dy: -6).contains(point) })?.key {
+            onOpenImage(fileName)
+            return
+        }
+        if note.audioFileName != nil, hitFrames.memo.insetBy(dx: -6, dy: -6).contains(point) {
+            voice.togglePlayback(for: note)
+            return
+        }
+        onTap()
     }
 }
 
@@ -576,6 +728,7 @@ private struct TimelineScrollState: Equatable {
     return TimelineView()
         .modelContainer(container)
         .environment(RecentDelete())
+        .environment(VoiceMemoController())
 }
 
 #Preview("Time Rail") {
@@ -603,4 +756,5 @@ private struct TimelineScrollState: Equatable {
     return TimelineView()
         .modelContainer(container)
         .environment(RecentDelete())
+        .environment(VoiceMemoController())
 }

@@ -13,11 +13,21 @@ final class Note {
     var text: String
     var createdAt: Date
     var boards: [Board]
+    var audioFileName: String? = nil
+    var audioDuration: Double = 0
+    var imageFileNames: [String] = []
+    var revisitDone: Bool = false
+    var revisitAfter: Date? = nil
 
     init(text: String, createdAt: Date = .now) {
         self.text = text
         self.createdAt = createdAt
         self.boards = []
+        self.audioFileName = nil
+        self.audioDuration = 0
+        self.imageFileNames = []
+        self.revisitDone = false
+        self.revisitAfter = nil
     }
 
     func isOn(_ board: Board) -> Bool {

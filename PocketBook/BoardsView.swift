@@ -26,6 +26,7 @@ struct BoardsView: View {
             }
             .navigationTitle("Boards")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("New Board", systemImage: "plus") {
@@ -80,6 +81,7 @@ struct BoardsView: View {
         .listStyle(.plain)
         .scrollIndicators(.hidden)
         .scrollContentBackground(.hidden)
+        .contentMargins(.bottom, 96, for: .scrollContent)
         .background(Color(.systemBackground))
     }
 
@@ -160,6 +162,7 @@ struct BoardDetailView: View {
                 .listStyle(.plain)
                 .scrollIndicators(.hidden)
                 .scrollContentBackground(.hidden)
+                .contentMargins(.bottom, 96, for: .scrollContent)
                 .background(Color(.systemBackground))
             }
         }
@@ -190,6 +193,8 @@ struct BoardDetailView: View {
 
 struct BoardPickerSheet: View {
     @Bindable var note: Note
+    var completesOnPick = false
+    var onPlaced: () -> Void = {}
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Board.createdAt, order: .reverse) private var boards: [Board]
@@ -203,8 +208,17 @@ struct BoardPickerSheet: View {
                     Section {
                         ForEach(boards) { board in
                             Button {
-                                note.toggleBoard(board)
-                                try? modelContext.save()
+                                if completesOnPick {
+                                    if !note.isOn(board) {
+                                        note.toggleBoard(board)
+                                    }
+                                    try? modelContext.save()
+                                    onPlaced()
+                                    dismiss()
+                                } else {
+                                    note.toggleBoard(board)
+                                    try? modelContext.save()
+                                }
                             } label: {
                                 HStack {
                                     Text(board.name)
@@ -255,5 +269,9 @@ struct BoardPickerSheet: View {
         note.toggleBoard(board)
         try? modelContext.save()
         newBoardName = ""
+        if completesOnPick {
+            onPlaced()
+            dismiss()
+        }
     }
 }

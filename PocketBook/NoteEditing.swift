@@ -33,6 +33,21 @@ final class TimelineEditor {
         scheduleActivation(for: id)
     }
 
+    func insertTranscript(_ transcript: String, into note: Note) {
+        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let existing = note.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let combined = existing.isEmpty ? cleaned : note.text + "\n" + cleaned
+        note.text = combined
+        if let view = textViews[note.persistentModelID] {
+            view.text = combined
+            let end = view.endOfDocument
+            view.selectedTextRange = view.textRange(from: end, to: end)
+            view.delegate?.textViewDidChange?(view)
+        }
+        try? note.modelContext?.save()
+    }
+
     func reclaim(_ id: PersistentIdentifier) {
         guard editingID == id else { return }
         reclaimCount += 1
@@ -164,6 +179,9 @@ struct NoteTextView: UIViewRepresentable {
     var note: Note
     var editor: TimelineEditor
     var onHeight: (CGFloat) -> Void
+    var onLibrary: () -> Void
+    var onCamera: () -> Void
+    @Environment(VoiceMemoController.self) private var voice
 
     func makeCoordinator() -> Coordinator {
         Coordinator(note: note, editor: editor, onHeight: onHeight)
@@ -191,6 +209,13 @@ struct NoteTextView: UIViewRepresentable {
         context.coordinator.note = note
         context.coordinator.editor = editor
         context.coordinator.onHeight = onHeight
+        context.coordinator.onLibrary = onLibrary
+        context.coordinator.onCamera = onCamera
+        context.coordinator.voice = voice
+        context.coordinator.syncMic(
+            isRecording: voice.recordingNoteID == note.persistentModelID,
+            canRecord: note.audioFileName == nil
+        )
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.text {
             textView.text = note.text
         }
@@ -219,6 +244,10 @@ struct NoteTextView: UIViewRepresentable {
         var note: Note
         var editor: TimelineEditor
         var onHeight: (CGFloat) -> Void
+        var onLibrary: () -> Void = {}
+        var onCamera: () -> Void = {}
+        var voice: VoiceMemoController?
+        private var micItem: UIBarButtonItem?
 
         init(note: Note, editor: TimelineEditor, onHeight: @escaping (CGFloat) -> Void) {
             self.note = note
@@ -228,10 +257,50 @@ struct NoteTextView: UIViewRepresentable {
 
         func makeAccessory() -> UIToolbar {
             let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
+            let mic = UIBarButtonItem(
+                image: UIImage(systemName: "mic"),
+                style: .plain,
+                target: self,
+                action: #selector(toggleRecording)
+            )
+            micItem = mic
+            if note.audioFileName != nil {
+                mic.isHidden = true
+            }
+            let photo = UIBarButtonItem(image: UIImage(systemName: "photo"), menu: photoMenu())
+            let gap = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+            gap.width = 8
             let save = UIBarButtonItem(title: "Save", style: .done, target: self, action: #selector(save))
             let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            bar.items = [flex, save]
+            bar.items = [photo, gap, mic, flex, save]
             return bar
+        }
+
+        private func photoMenu() -> UIMenu {
+            var actions = [
+                UIAction(title: "Photo Library", image: UIImage(systemName: "photo.on.rectangle")) { [weak self] _ in
+                    self?.onLibrary()
+                }
+            ]
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                actions.append(
+                    UIAction(title: "Take Photo", image: UIImage(systemName: "camera")) { [weak self] _ in
+                        self?.onCamera()
+                    }
+                )
+            }
+            return UIMenu(children: actions)
+        }
+
+        func syncMic(isRecording: Bool, canRecord: Bool) {
+            micItem?.isHidden = !canRecord && !isRecording
+            micItem?.image = UIImage(systemName: isRecording ? "stop.fill" : "mic")
+            micItem?.tintColor = isRecording ? .systemRed : .label
+        }
+
+        @objc func toggleRecording() {
+            guard note.audioFileName == nil || voice?.recordingNoteID == note.persistentModelID else { return }
+            voice?.toggleRecording(for: note, editor: editor)
         }
 
         @objc func save() {
@@ -245,6 +314,9 @@ struct NoteTextView: UIViewRepresentable {
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
+            if editor.editingID != note.persistentModelID {
+                voice?.stopRecordingIfCurrent(note.persistentModelID)
+            }
             try? note.modelContext?.save()
             editor.reclaim(note.persistentModelID)
         }
@@ -262,7 +334,7 @@ struct NoteTextView: UIViewRepresentable {
 }
 
 struct NoteTouchSurface: UIViewRepresentable {
-    var onTap: () -> Void
+    var onTap: (CGPoint) -> Void
     var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
 
     func makeCoordinator() -> Coordinator {
@@ -277,6 +349,7 @@ struct NoteTouchSurface: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
         tap.delegate = context.coordinator
+        view.addGestureRecognizer(tap)
 
         let press = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePress(_:)))
         press.minimumPressDuration = 0.35
@@ -285,8 +358,6 @@ struct NoteTouchSurface: UIViewRepresentable {
         press.delaysTouchesBegan = false
         press.delaysTouchesEnded = false
         press.delegate = context.coordinator
-
-        view.addGestureRecognizer(tap)
         view.addGestureRecognizer(press)
         context.coordinator.press = press
         return view
@@ -302,13 +373,13 @@ struct NoteTouchSurface: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onTap: () -> Void
+        var onTap: (CGPoint) -> Void
         var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
         weak var press: UILongPressGestureRecognizer?
         private var pressOwnsTouch = false
 
         init(
-            onTap: @escaping () -> Void,
+            onTap: @escaping (CGPoint) -> Void,
             onLongPress: @escaping (UIGestureRecognizer.State, CGPoint) -> Bool
         ) {
             self.onTap = onTap
@@ -324,7 +395,7 @@ struct NoteTouchSurface: UIViewRepresentable {
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, !pressOwnsTouch else { return }
-            onTap()
+            onTap(recognizer.location(in: nil))
         }
 
         @objc func handlePress(_ recognizer: UILongPressGestureRecognizer) {
