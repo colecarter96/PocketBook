@@ -116,6 +116,8 @@ enum NoteImageStore {
 
 struct NoteHitFrames: Equatable {
     var memo: CGRect = .zero
+    var transcriptToggle: CGRect = .zero
+    var transcriptField: CGRect = .zero
     var images: [String: CGRect] = [:]
     var check: CGRect = .zero
 }
@@ -127,6 +129,12 @@ struct NoteHitPreference: PreferenceKey {
         let next = nextValue()
         if next.memo != .zero {
             value.memo = next.memo
+        }
+        if next.transcriptToggle != .zero {
+            value.transcriptToggle = next.transcriptToggle
+        }
+        if next.transcriptField != .zero {
+            value.transcriptField = next.transcriptField
         }
         if next.check != .zero {
             value.check = next.check

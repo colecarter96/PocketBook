@@ -43,6 +43,8 @@ struct TimelineView: View {
     @State private var libraryItems: [PhotosPickerItem] = []
     @State private var previewImageName: String?
     @State private var editingPhotosNoteID: PersistentIdentifier?
+    @State private var headerHidden: CGFloat = 0
+    @State private var statusBarHeight: CGFloat = 54
 
     private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
@@ -60,6 +62,21 @@ struct TimelineView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
+            .toolbarColorScheme(headerHidden < statusBarHeight ? .dark : .light, for: .navigationBar)
+            .overlay(alignment: .top) {
+                streamHeader
+                    .offset(y: streamHeaderSlide)
+                    .ignoresSafeArea(edges: .top)
+            }
+            .background {
+                GeometryReader { geometry in
+                    Color.clear
+                        .onAppear { statusBarHeight = resolvedStatusBarHeight(geometry.safeAreaInsets.top) }
+                        .onChange(of: geometry.safeAreaInsets.top) { _, inset in
+                            statusBarHeight = resolvedStatusBarHeight(inset)
+                        }
+                }
+            }
             .overlay(alignment: .bottomTrailing) {
                 VStack(alignment: .trailing, spacing: 14) {
                     if recentDelete.canUndo {
@@ -133,6 +150,57 @@ struct TimelineView: View {
         }
     }
 
+    private var streamHeaderSlide: CGFloat {
+        -headerHidden
+    }
+
+    private var streamHeaderReach: CGFloat {
+        statusBarHeight + StreamHeader.height
+    }
+
+    private var streamHeader: some View {
+        VStack(spacing: 0) {
+            Color.black
+                .frame(height: statusBarHeight)
+
+            HStack(alignment: .center) {
+                Text("Stream")
+                    .font(.custom("HelveticaNeue-Medium", size: 22))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                Menu {
+                    Button("New Note", systemImage: "plus") {
+                        startNewNote()
+                    }
+                } label: {
+                    Text("---")
+                        .font(.custom("HelveticaNeue-Medium", size: 18))
+                        .foregroundStyle(.primary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Menu")
+            }
+            .padding(.leading, 22)
+            .padding(.trailing, 12)
+            .frame(height: StreamHeader.height)
+            .frame(maxWidth: .infinity)
+            .background(Color(.systemBackground))
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private func resolvedStatusBarHeight(_ inset: CGFloat) -> CGFloat {
+        if inset > 1 { return inset }
+        let bar = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.statusBarManager?.statusBarFrame.height }
+            .first ?? 54
+        return bar > 1 ? bar : 54
+    }
+
     private var composeButton: some View {
         Button(action: startNewNote) {
             Image(systemName: "plus")
@@ -155,17 +223,10 @@ struct TimelineView: View {
     private var timeline: some View {
         ScrollViewReader { proxy in
             List {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Stream")
-                        .font(.system(.title2, design: .serif).weight(.bold))
-                        .foregroundStyle(.primary)
-                        .padding(.top, 28)
-
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, minHeight: firstNoteTopInset, alignment: .topLeading)
+                Color.clear
+                .frame(height: StreamHeader.height + 32)
                 .id(TimelineAnchor.top)
-                .listRowInsets(EdgeInsets(top: 8, leading: 28, bottom: 0, trailing: 36))
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 ForEach(notes) { note in
@@ -232,6 +293,7 @@ struct TimelineView: View {
                 TimelineScrollState(geometry: geometry)
             } action: { oldState, newState in
                 canScrollTimeline = newState.canScroll
+                updateStreamHeader(from: oldState.offsetY, to: newState.offsetY)
                 if editor.editingID == nil {
                     timelineHeight = newState.containerHeight
                     restingTimelineHeight = newState.containerHeight
@@ -288,7 +350,7 @@ struct TimelineView: View {
                     cancelRadial()
                 }
                 editor.end()
-                withAnimation(.easeOut(duration: 0.35)) {
+                withAnimation(.spring(duration: 0.95, bounce: 0)) {
                     proxy.scrollTo(TimelineAnchor.top, anchor: .top)
                 }
             }
@@ -457,6 +519,7 @@ struct TimelineView: View {
         VoiceMemoStore.delete(note.audioFileName)
         note.audioFileName = nil
         note.audioDuration = 0
+        note.transcript = ""
         persist()
     }
 
@@ -513,11 +576,13 @@ struct TimelineView: View {
         }
     }
 
-    private var firstNoteTopInset: CGFloat {
-        let height = restingTimelineHeight > 0
-            ? restingTimelineHeight
-            : (timelineHeight > 0 ? timelineHeight : 700)
-        return height * 0.25
+    private func updateStreamHeader(from oldOffset: CGFloat, to newOffset: CGFloat) {
+        if newOffset <= 0 {
+            headerHidden = 0
+            return
+        }
+        let delta = newOffset - oldOffset
+        headerHidden = min(streamHeaderReach, max(0, headerHidden + delta))
     }
 
     private func noteIndex(for progress: CGFloat) -> Int {
@@ -615,6 +680,8 @@ private struct NoteRow: View {
     @Environment(VoiceMemoController.self) private var voice
     @State private var editorHeight: CGFloat = 22
     @State private var hitFrames = NoteHitFrames()
+    @State private var transcriptOpen = false
+    @State private var transcriptEditing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -643,6 +710,9 @@ private struct NoteRow: View {
                         )
                     }
                 }
+            if note.audioFileName != nil {
+                MemoTranscript(note: note, isOpen: $transcriptOpen, isEditing: $transcriptEditing)
+            }
             NoteImageStrip(
                 fileNames: note.imageFileNames,
                 isArranging: isArrangingPhotos,
@@ -657,11 +727,20 @@ private struct NoteRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay {
             if !isEditing {
-                NoteTouchSurface(onTap: handleCardTap, onLongPress: onLongPress)
+                NoteTouchSurface(
+                    passThrough: transcriptEditing ? hitFrames.transcriptField : .zero,
+                    onTap: handleCardTap,
+                    onLongPress: onLongPress
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onPreferenceChange(NoteHitPreference.self) { hitFrames = $0 }
+        .onChange(of: isEditing) { _, editing in
+            if editing {
+                transcriptEditing = false
+            }
+        }
     }
 
     private func handleCardTap(_ point: CGPoint) {
@@ -682,12 +761,26 @@ private struct NoteRow: View {
             onOpenImage(fileName)
             return
         }
+        if transcriptOpen, hitFrames.transcriptField.insetBy(dx: -4, dy: -4).contains(point) {
+            transcriptEditing = true
+            return
+        }
+        if hitFrames.transcriptToggle.insetBy(dx: -8, dy: -6).contains(point) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                transcriptOpen.toggle()
+            }
+            return
+        }
         if note.audioFileName != nil, hitFrames.memo.insetBy(dx: -6, dy: -6).contains(point) {
             voice.togglePlayback(for: note)
             return
         }
         onTap()
     }
+}
+
+private enum StreamHeader {
+    static let height: CGFloat = 48
 }
 
 private enum TimelineAnchor: Hashable {

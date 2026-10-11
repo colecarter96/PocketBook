@@ -61,12 +61,7 @@ enum RadialFan {
             let angle = aim + offset(index: index, count: actions.count)
             centers[action] = point(origin: origin, angle: angle, radius: radius)
         }
-        let rawLabel = point(origin: origin, angle: aim, radius: radius + 52)
-        let label = CGPoint(
-            x: min(max(rawLabel.x, container.minX + 56), container.maxX - 56),
-            y: min(max(rawLabel.y, container.minY + 18), container.maxY - 18)
-        )
-        return RadialPlacement(centers: centers, label: label)
+        return RadialPlacement(centers: centers, label: labelPoint(origin: origin, in: container))
     }
 
     private static let step: CGFloat = 0.76
@@ -110,6 +105,16 @@ enum RadialFan {
         }
     }
 
+    private static func labelPoint(origin: CGPoint, in container: CGRect) -> CGPoint {
+        let towardLeft = origin.x > container.midX
+        let x = origin.x + (towardLeft ? -72 : 72)
+        let y = origin.y - 112
+        return CGPoint(
+            x: min(max(x, container.minX + 64), container.maxX - 64),
+            y: min(max(y, container.minY + 28), container.maxY - 28)
+        )
+    }
+
     private static func point(origin: CGPoint, angle: CGFloat, radius: CGFloat) -> CGPoint {
         CGPoint(
             x: origin.x + cos(angle) * radius,
@@ -151,11 +156,12 @@ struct RadialActionMenu: View {
                     Text(hovered.title)
                         .font(.system(.title2, design: .serif).weight(.semibold))
                         .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 140, alignment: .center)
                         .position(
                             x: placement.label.x - frame.minX,
                             y: placement.label.y - frame.minY
                         )
-                        .transition(.opacity)
                 }
             }
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: hovered)

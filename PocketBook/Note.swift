@@ -15,6 +15,7 @@ final class Note {
     var boards: [Board]
     var audioFileName: String? = nil
     var audioDuration: Double = 0
+    var transcript: String = ""
     var imageFileNames: [String] = []
     var revisitDone: Bool = false
     var revisitAfter: Date? = nil
@@ -25,6 +26,7 @@ final class Note {
         self.boards = []
         self.audioFileName = nil
         self.audioDuration = 0
+        self.transcript = ""
         self.imageFileNames = []
         self.revisitDone = false
         self.revisitAfter = nil

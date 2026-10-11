@@ -36,15 +36,7 @@ final class TimelineEditor {
     func insertTranscript(_ transcript: String, into note: Note) {
         let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
-        let existing = note.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let combined = existing.isEmpty ? cleaned : note.text + "\n" + cleaned
-        note.text = combined
-        if let view = textViews[note.persistentModelID] {
-            view.text = combined
-            let end = view.endOfDocument
-            view.selectedTextRange = view.textRange(from: end, to: end)
-            view.delegate?.textViewDidChange?(view)
-        }
+        note.transcript = cleaned
         try? note.modelContext?.save()
     }
 
@@ -178,6 +170,7 @@ final class TimelineEditor {
 struct NoteTextView: UIViewRepresentable {
     var note: Note
     var editor: TimelineEditor
+    var fillsSpace = false
     var onHeight: (CGFloat) -> Void
     var onLibrary: () -> Void
     var onCamera: () -> Void
@@ -193,7 +186,7 @@ struct NoteTextView: UIViewRepresentable {
         textView.textColor = .label
         textView.tintColor = .label
         textView.font = Self.serifBody
-        textView.isScrollEnabled = false
+        textView.isScrollEnabled = fillsSpace
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.widthTracksTextView = true
@@ -212,6 +205,8 @@ struct NoteTextView: UIViewRepresentable {
         context.coordinator.onLibrary = onLibrary
         context.coordinator.onCamera = onCamera
         context.coordinator.voice = voice
+        context.coordinator.textView = textView
+        textView.isScrollEnabled = fillsSpace
         context.coordinator.syncMic(
             isRecording: voice.recordingNoteID == note.persistentModelID,
             canRecord: note.audioFileName == nil
@@ -230,6 +225,9 @@ struct NoteTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let width = proposal.width ?? uiView.bounds.width
         guard width > 1 else { return nil }
+        if fillsSpace, let proposedHeight = proposal.height, proposedHeight > 1 {
+            return CGSize(width: width, height: proposedHeight)
+        }
         let height = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         return CGSize(width: width, height: max(22, ceil(height)))
     }
@@ -247,6 +245,7 @@ struct NoteTextView: UIViewRepresentable {
         var onLibrary: () -> Void = {}
         var onCamera: () -> Void = {}
         var voice: VoiceMemoController?
+        weak var textView: UITextView?
         private var micItem: UIBarButtonItem?
 
         init(note: Note, editor: TimelineEditor, onHeight: @escaping (CGFloat) -> Void) {
@@ -304,7 +303,11 @@ struct NoteTextView: UIViewRepresentable {
         }
 
         @objc func save() {
+            if let textView {
+                note.text = textView.text ?? ""
+            }
             try? note.modelContext?.save()
+            textView?.resignFirstResponder()
             editor.end()
         }
 
@@ -334,6 +337,7 @@ struct NoteTextView: UIViewRepresentable {
 }
 
 struct NoteTouchSurface: UIViewRepresentable {
+    var passThrough: CGRect = .zero
     var onTap: (CGPoint) -> Void
     var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
 
@@ -341,10 +345,11 @@ struct NoteTouchSurface: UIViewRepresentable {
         Coordinator(onTap: onTap, onLongPress: onLongPress)
     }
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+    func makeUIView(context: Context) -> TouchView {
+        let view = TouchView()
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = true
+        view.passThrough = passThrough
 
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
@@ -363,12 +368,28 @@ struct NoteTouchSurface: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
+    func updateUIView(_ uiView: TouchView, context: Context) {
+        uiView.passThrough = passThrough
         context.coordinator.onTap = onTap
         context.coordinator.onLongPress = onLongPress
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+    final class TouchView: UIView {
+        var passThrough: CGRect = .zero
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            guard passThrough.width > 1, passThrough.height > 1 else {
+                return super.hitTest(point, with: event)
+            }
+            let global = convert(point, to: nil)
+            if passThrough.insetBy(dx: -8, dy: -8).contains(global) {
+                return nil
+            }
+            return super.hitTest(point, with: event)
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: TouchView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
     }
 

@@ -26,7 +26,10 @@ struct SearchView: View {
 
     private var matches: [Note] {
         guard !trimmedQuery.isEmpty else { return [] }
-        return notes.filter { $0.text.localizedStandardContains(trimmedQuery) }
+        return notes.filter {
+            $0.text.localizedStandardContains(trimmedQuery)
+                || $0.transcript.localizedStandardContains(trimmedQuery)
+        }
     }
 
     var body: some View {
@@ -144,7 +147,7 @@ private struct SearchResultRow: View {
     }
 
     private var highlightedSnippet: AttributedString {
-        let snippetText = snippet(from: note.text, matching: query)
+        let snippetText = snippet(from: snippetSource, matching: query)
         var attributed = AttributedString(snippetText)
         var searchStart = snippetText.startIndex
 
@@ -161,6 +164,13 @@ private struct SearchResultRow: View {
         }
 
         return attributed
+    }
+
+    private var snippetSource: String {
+        if note.text.localizedStandardContains(query) {
+            return note.text
+        }
+        return note.transcript
     }
 
     private func snippet(from text: String, matching query: String) -> String {
@@ -195,6 +205,8 @@ struct NoteDetailView: View {
     @State private var libraryItems: [PhotosPickerItem] = []
     @State private var showCamera = false
     @State private var transcriptEditor = TimelineEditor()
+    @State private var transcriptOpen = false
+    @State private var transcriptEditing = false
 
     private var isRecording: Bool {
         voice.recordingNoteID == note.persistentModelID
@@ -203,13 +215,18 @@ struct NoteDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if note.audioFileName != nil || isRecording {
-                HStack(spacing: 12) {
-                    VoiceMemoBar(note: note)
-                    if isRecording {
-                        Button("Stop") {
-                            voice.toggleRecording(for: note, editor: transcriptEditor)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        VoiceMemoBar(note: note)
+                        if isRecording {
+                            Button("Stop") {
+                                voice.toggleRecording(for: note, editor: transcriptEditor)
+                            }
+                            .font(.caption.weight(.semibold))
                         }
-                        .font(.caption.weight(.semibold))
+                    }
+                    if note.audioFileName != nil {
+                        MemoTranscript(note: note, isOpen: $transcriptOpen, isEditing: $transcriptEditing)
                     }
                 }
                 .padding(.horizontal)
@@ -225,12 +242,20 @@ struct NoteDetailView: View {
             )
             .padding(.horizontal)
 
-            TextField("", text: $note.text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(.title3, design: .serif))
-                .padding(.horizontal)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            NoteTextView(
+                note: note,
+                editor: transcriptEditor,
+                fillsSpace: true,
+                onHeight: { _ in },
+                onLibrary: {
+                    libraryItems = []
+                    showLibrary = true
+                },
+                onCamera: { showCamera = true }
+            )
+            .padding(.horizontal)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -348,6 +373,7 @@ struct NoteDetailView: View {
         VoiceMemoStore.delete(note.audioFileName)
         note.audioFileName = nil
         note.audioDuration = 0
+        note.transcript = ""
         try? modelContext.save()
     }
 

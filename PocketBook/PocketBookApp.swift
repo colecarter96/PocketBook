@@ -14,6 +14,8 @@ struct PocketBookApp: App {
     let container: ModelContainer
 
     init() {
+        _ = ScrollFriction.install
+        UIScrollView.appearance().decelerationRate = ScrollFriction.rate
         do {
             container = try ModelContainer(for: Note.self, Board.self)
         } catch {
@@ -39,6 +41,7 @@ final class RecentDelete {
         var boards: [Board]
         var audioFileName: String?
         var audioDuration: Double
+        var transcript: String
         var imageFileNames: [String]
         var revisitDone: Bool
         var revisitAfter: Date?
@@ -61,6 +64,7 @@ final class RecentDelete {
             boards: note.boards,
             audioFileName: note.audioFileName,
             audioDuration: note.audioDuration,
+            transcript: note.transcript,
             imageFileNames: note.imageFileNames,
             revisitDone: note.revisitDone,
             revisitAfter: note.revisitAfter
@@ -74,6 +78,7 @@ final class RecentDelete {
         note.boards = snapshot.boards
         note.audioFileName = snapshot.audioFileName
         note.audioDuration = snapshot.audioDuration
+        note.transcript = snapshot.transcript
         note.imageFileNames = snapshot.imageFileNames
         note.revisitDone = snapshot.revisitDone
         note.revisitAfter = snapshot.revisitAfter
@@ -239,6 +244,25 @@ struct RootView: View {
         withAnimation(.easeOut(duration: 0.22)) {
             searchBarOpen = false
         }
+    }
+}
+
+private enum ScrollFriction {
+    static let rate = UIScrollView.DecelerationRate(rawValue: 0.9)
+
+    static let install: Void = {
+        let cls: AnyClass = UIScrollView.self
+        let original = #selector(setter: UIScrollView.decelerationRate)
+        let replacement = #selector(UIScrollView.pocket_setDecelerationRate(_:))
+        guard let method = class_getInstanceMethod(cls, original),
+              let swizzled = class_getInstanceMethod(cls, replacement) else { return }
+        method_exchangeImplementations(method, swizzled)
+    }()
+}
+
+extension UIScrollView {
+    @objc func pocket_setDecelerationRate(_ rate: UIScrollView.DecelerationRate) {
+        pocket_setDecelerationRate(ScrollFriction.rate)
     }
 }
 

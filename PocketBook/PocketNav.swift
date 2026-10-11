@@ -92,15 +92,15 @@ struct StreamNavBar: View {
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.caption.weight(.medium))
+                .font(.body.weight(.medium))
                 .foregroundStyle(Color.black.opacity(0.9))
 
             TextField(
                 "",
                 text: $query,
-                prompt: Text("Search my stream..").foregroundStyle(Color.black.opacity(0.9))
+                prompt: Text("Search Stream").foregroundStyle(Color.black.opacity(0.9))
             )
-            .font(.system(.caption, design: .serif))
+            .font(.system(.body, design: .serif))
             .foregroundStyle(Color.black)
             .tint(Color.black)
             .focused(isSearchFocused)
@@ -108,7 +108,21 @@ struct StreamNavBar: View {
             .autocorrectionDisabled()
             .submitLabel(.search)
             .onSubmit(onSubmit)
-
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity)
+        .frame(height: 54)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            if !isSearchFocused.wrappedValue {
+                Color.clear
+                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .onTapGesture(perform: focusSearch)
+            }
+        }
+        .overlay(alignment: .trailing) {
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -116,16 +130,21 @@ struct StreamNavBar: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.body)
                         .foregroundStyle(Color.black.opacity(0.35))
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
+                .padding(.trailing, 6)
                 .accessibilityLabel("Clear")
             }
         }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity)
-        .frame(height: 54)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
         .environment(\.colorScheme, .light)
+    }
+
+    private func focusSearch() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isSearchFocused.wrappedValue = true
+        }
     }
 }
