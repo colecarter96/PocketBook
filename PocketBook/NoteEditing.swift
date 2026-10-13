@@ -195,6 +195,7 @@ struct NoteTextView: UIViewRepresentable {
         textView.delegate = context.coordinator
         textView.text = note.text
         textView.inputAccessoryView = context.coordinator.makeAccessory()
+        context.coordinator.installPlaceholder(on: textView)
         return textView
     }
 
@@ -214,6 +215,7 @@ struct NoteTextView: UIViewRepresentable {
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.text {
             textView.text = note.text
         }
+        context.coordinator.syncPlaceholder(on: textView)
         editor.register(note.persistentModelID, view: textView)
         context.coordinator.publishHeight(of: textView)
     }
@@ -247,6 +249,7 @@ struct NoteTextView: UIViewRepresentable {
         var voice: VoiceMemoController?
         weak var textView: UITextView?
         private var micItem: UIBarButtonItem?
+        private static let placeholderTag = 91
 
         init(note: Note, editor: TimelineEditor, onHeight: @escaping (CGFloat) -> Void) {
             self.note = note
@@ -311,8 +314,27 @@ struct NoteTextView: UIViewRepresentable {
             editor.end()
         }
 
+        func installPlaceholder(on textView: UITextView) {
+            let label = UILabel()
+            label.tag = Self.placeholderTag
+            label.text = "Add note..."
+            label.textColor = .darkGray
+            label.font = textView.font
+            label.isUserInteractionEnabled = false
+            textView.addSubview(label)
+            syncPlaceholder(on: textView)
+        }
+
+        func syncPlaceholder(on textView: UITextView) {
+            guard let label = textView.viewWithTag(Self.placeholderTag) as? UILabel else { return }
+            label.font = textView.font
+            label.frame = CGRect(x: 0, y: 0, width: max(textView.bounds.width, 1), height: 22)
+            label.isHidden = !(textView.text ?? "").isEmpty
+        }
+
         func textViewDidChange(_ textView: UITextView) {
             note.text = textView.text ?? ""
+            syncPlaceholder(on: textView)
             publishHeight(of: textView)
         }
 

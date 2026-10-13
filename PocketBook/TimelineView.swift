@@ -45,10 +45,14 @@ struct TimelineView: View {
     @State private var editingPhotosNoteID: PersistentIdentifier?
     @State private var headerHidden: CGFloat = 0
     @State private var statusBarHeight: CGFloat = 54
+    @State private var headerTopToken = 0
+    @State private var composeTopToken = 0
+    @State private var isSelecting = false
+    @State private var selectedNoteIDs: Set<PersistentIdentifier> = []
 
     private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
-        notes.count >= 8 && canScrollTimeline && radialNoteID == nil
+        notes.count >= 8 && canScrollTimeline && radialNoteID == nil && !isSelecting
     }
 
     var body: some View {
@@ -90,7 +94,7 @@ struct TimelineView: View {
                         .accessibilityLabel("Undo Delete")
                     }
 
-                    if !isEditing {
+                    if !isEditing && !isSelecting {
                         composeButton
                     }
                 }
@@ -139,6 +143,14 @@ struct TimelineView: View {
                     }
                 }
             }
+            .background {
+                EditingOutsideTap(editingID: editor.editingID, noteFrame: editingNoteFrame) { editingID in
+                    DispatchQueue.main.async {
+                        guard editor.editingID == editingID else { return }
+                        editor.end()
+                    }
+                }
+            }
         }
         .sensoryFeedback(.selection, trigger: hapticNoteIndex)
         .sensoryFeedback(.impact(weight: .heavy), trigger: railImpactToken)
@@ -146,6 +158,12 @@ struct TimelineView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 persist()
+            }
+        }
+        .onChange(of: editor.editingID) { previous, _ in
+            guard let previous else { return }
+            DispatchQueue.main.async {
+                discardIfEmpty(previous)
             }
         }
     }
@@ -162,35 +180,69 @@ struct TimelineView: View {
         VStack(spacing: 0) {
             Color.black
                 .frame(height: statusBarHeight)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: requestHeaderTop)
 
-            HStack(alignment: .center) {
-                Text("Stream")
-                    .font(.custom("HelveticaNeue-Medium", size: 22))
-                    .foregroundStyle(.primary)
-
-                Spacer(minLength: 0)
-
-                Menu {
-                    Button("New Note", systemImage: "plus") {
-                        startNewNote()
-                    }
-                } label: {
-                    Text("---")
-                        .font(.custom("HelveticaNeue-Medium", size: 18))
+            HStack(alignment: .center, spacing: 0) {
+                Button(action: requestHeaderTop) {
+                    Text("Stream")
+                        .font(.custom("HelveticaNeue-Medium", size: 22))
                         .foregroundStyle(.primary)
-                        .frame(width: 44, height: 44)
+                        .padding(.leading, 22)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Menu")
+
+                if isSelecting {
+                    Button(action: deleteSelected) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(selectedNoteIDs.isEmpty ? Color.black.opacity(0.25) : Color.black)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(selectedNoteIDs.isEmpty)
+                    .accessibilityLabel("Delete Selected")
+
+                    Button(action: endSelecting) {
+                        Text("Done")
+                            .font(.custom("HelveticaNeue-Medium", size: 17))
+                            .foregroundStyle(.primary)
+                            .frame(height: 44)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Menu {
+                        Button("New Note", systemImage: "plus") {
+                            startNewNote()
+                        }
+                        Button("Select", systemImage: "checkmark.circle") {
+                            beginSelecting()
+                        }
+                    } label: {
+                        Text("---")
+                            .font(.custom("HelveticaNeue-Medium", size: 18))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Menu")
+                }
             }
-            .padding(.leading, 22)
             .padding(.trailing, 12)
             .frame(height: StreamHeader.height)
             .frame(maxWidth: .infinity)
             .background(Color(.systemBackground))
         }
         .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private func requestHeaderTop() {
+        headerTopToken += 1
     }
 
     private func resolvedStatusBarHeight(_ inset: CGFloat) -> CGFloat {
@@ -234,7 +286,15 @@ struct TimelineView: View {
                         note: note,
                         isEditing: editor.editingID == note.persistentModelID,
                         editor: editor,
-                        onTap: { edit(note) },
+                        isSelecting: isSelecting,
+                        isSelected: selectedNoteIDs.contains(note.persistentModelID),
+                        onTap: {
+                            if isSelecting {
+                                toggleSelection(note)
+                            } else {
+                                edit(note)
+                            }
+                        },
                         onLongPress: { state, point in
                             handlePress(state, at: point, noteID: note.persistentModelID)
                         },
@@ -323,8 +383,8 @@ struct TimelineView: View {
                         .padding(.top, 28 + topCut)
                         .padding(.bottom, 96)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                        .opacity(isEditing ? 0 : 1)
-                        .allowsHitTesting(!isEditing)
+                        .opacity(isEditing || isSelecting ? 0 : 1)
+                        .allowsHitTesting(!isEditing && !isSelecting)
                     }
                 }
             }
@@ -346,13 +406,13 @@ struct TimelineView: View {
                 }
             }
             .onChange(of: scrollToTopToken) { _, _ in
-                if radialNoteID != nil {
-                    cancelRadial()
-                }
-                editor.end()
-                withAnimation(.spring(duration: 0.95, bounce: 0)) {
-                    proxy.scrollTo(TimelineAnchor.top, anchor: .top)
-                }
+                scrollToTop(proxy, endEditing: true)
+            }
+            .onChange(of: headerTopToken) { _, _ in
+                scrollToTop(proxy, endEditing: true)
+            }
+            .onChange(of: composeTopToken) { _, _ in
+                scrollToTop(proxy, endEditing: false)
             }
             .background {
                 GeometryReader { geometry in
@@ -382,7 +442,7 @@ struct TimelineView: View {
     ) -> Bool {
         switch state {
         case .began:
-            guard !isEditing else { return false }
+            guard !isEditing, !isSelecting else { return false }
             beginRadial(noteID: noteID, at: point)
             return true
         case .changed:
@@ -601,10 +661,75 @@ struct TimelineView: View {
         modelContext.insert(note)
         persist()
         editor.begin(note.persistentModelID, scrollIntoView: false)
+        composeTopToken += 1
+    }
+
+    private var editingNoteFrame: CGRect {
+        guard let editingID = editor.editingID,
+              let frame = noteFrames[editingID],
+              frame.width > 1, frame.height > 1 else {
+            return .zero
+        }
+        return frame
+    }
+
+    private func scrollToTop(_ proxy: ScrollViewProxy, endEditing: Bool) {
+        if radialNoteID != nil {
+            cancelRadial()
+        }
+        if endEditing {
+            editor.end()
+        }
+        withAnimation(.spring(duration: 0.95, bounce: 0)) {
+            proxy.scrollTo(TimelineAnchor.top, anchor: .top)
+        }
     }
 
     private func persist() {
         try? modelContext.save()
+    }
+
+    private func discardIfEmpty(_ id: PersistentIdentifier) {
+        guard voiceMemos.recordingNoteID != id else { return }
+        guard libraryNote?.persistentModelID != id, cameraNote?.persistentModelID != id else { return }
+        guard let note = notes.first(where: { $0.persistentModelID == id }), note.isBlank else { return }
+        modelContext.delete(note)
+        persist()
+    }
+
+    private func beginSelecting() {
+        editor.end()
+        if radialNoteID != nil {
+            cancelRadial()
+        }
+        selectedNoteIDs = []
+        isSelecting = true
+    }
+
+    private func endSelecting() {
+        selectedNoteIDs = []
+        isSelecting = false
+    }
+
+    private func toggleSelection(_ note: Note) {
+        if selectedNoteIDs.contains(note.persistentModelID) {
+            selectedNoteIDs.remove(note.persistentModelID)
+        } else {
+            selectedNoteIDs.insert(note.persistentModelID)
+        }
+    }
+
+    private func deleteSelected() {
+        let chosen = notes.filter { selectedNoteIDs.contains($0.persistentModelID) }
+        guard !chosen.isEmpty else { return }
+        recentDelete.remember(chosen)
+        for note in chosen {
+            voiceMemos.stopPlayback(of: note)
+            voiceMemos.stopRecordingIfCurrent(note.persistentModelID)
+            modelContext.delete(note)
+        }
+        persist()
+        selectedNoteIDs = []
     }
 
     private func deleteNote(_ note: Note) {
@@ -669,6 +794,8 @@ private struct NoteRow: View {
     @Bindable var note: Note
     var isEditing: Bool
     var editor: TimelineEditor
+    var isSelecting: Bool
+    var isSelected: Bool
     var onTap: () -> Void
     var onLongPress: (UIGestureRecognizer.State, CGPoint) -> Bool
     var onLibrary: () -> Void
@@ -684,7 +811,15 @@ private struct NoteRow: View {
     @State private var transcriptEditing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .top, spacing: 12) {
+            if isSelecting {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22))
+                    .foregroundStyle(isSelected ? Color.black : Color.black.opacity(0.28))
+                    .padding(.top, 1)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
             if isEditing {
                 NoteTextView(note: note, editor: editor, onHeight: { height in
                     if abs(editorHeight - height) > 0.5 {
@@ -693,9 +828,9 @@ private struct NoteRow: View {
                 }, onLibrary: onLibrary, onCamera: onCamera)
                 .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
             } else {
-                Text(note.text.isEmpty ? " " : note.text)
+                Text(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add note..." : note.text)
                     .font(.system(.body, design: .serif))
-                    .foregroundStyle(note.text.isEmpty ? .clear : .primary)
+                    .foregroundStyle(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(.darkGray) : .primary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(note.audioFileName == nil ? 8 : 4)
                     .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
@@ -722,6 +857,7 @@ private struct NoteRow: View {
             Text(note.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 22)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -744,6 +880,10 @@ private struct NoteRow: View {
     }
 
     private func handleCardTap(_ point: CGPoint) {
+        if isSelecting {
+            onTap()
+            return
+        }
         if isArrangingPhotos, hitFrames.check.insetBy(dx: -8, dy: -8).contains(point) {
             onFinishPhotoEdit()
             return
@@ -776,6 +916,112 @@ private struct NoteRow: View {
             return
         }
         onTap()
+    }
+}
+
+private struct EditingOutsideTap: UIViewRepresentable {
+    var editingID: PersistentIdentifier?
+    var noteFrame: CGRect
+    var onOutside: (PersistentIdentifier) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onOutside: onOutside)
+    }
+
+    func makeUIView(context: Context) -> HostView {
+        let view = HostView()
+        view.isUserInteractionEnabled = false
+        view.onMoveToWindow = { [weak coordinator = context.coordinator] host in
+            coordinator?.attach(from: host)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: HostView, context: Context) {
+        context.coordinator.editingID = editingID
+        context.coordinator.noteFrame = noteFrame
+        context.coordinator.onOutside = onOutside
+        context.coordinator.attach(from: uiView)
+    }
+
+    static func dismantleUIView(_ uiView: HostView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class HostView: UIView {
+        var onMoveToWindow: ((HostView) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onMoveToWindow?(self)
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var editingID: PersistentIdentifier?
+        var noteFrame: CGRect = .zero
+        var onOutside: (PersistentIdentifier) -> Void
+        private var armedID: PersistentIdentifier?
+        private weak var window: UIWindow?
+        private var tap: UITapGestureRecognizer?
+
+        init(onOutside: @escaping (PersistentIdentifier) -> Void) {
+            self.onOutside = onOutside
+        }
+
+        func attach(from view: UIView) {
+            guard let window = view.window else { return }
+            guard self.window !== window || tap == nil else { return }
+            detach()
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+            tap.cancelsTouchesInView = false
+            tap.delaysTouchesBegan = false
+            tap.delegate = self
+            window.addGestureRecognizer(tap)
+            self.tap = tap
+            self.window = window
+        }
+
+        func detach() {
+            if let tap, let window {
+                window.removeGestureRecognizer(tap)
+            }
+            tap = nil
+            window = nil
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard let editingID, noteFrame.width > 1, noteFrame.height > 1 else { return false }
+            if touchesEditingChrome(touch) { return false }
+            let point = touch.location(in: nil)
+            if noteFrame.insetBy(dx: -8, dy: -6).contains(point) { return false }
+            armedID = editingID
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+
+        private func touchesEditingChrome(_ touch: UITouch) -> Bool {
+            var view = touch.view
+            while let current = view {
+                if current is UITextView || current is UIToolbar { return true }
+                view = current.superview
+            }
+            return false
+        }
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended, let armedID else { return }
+            onOutside(armedID)
+        }
     }
 }
 

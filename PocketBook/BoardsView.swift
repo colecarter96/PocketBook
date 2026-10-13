@@ -24,18 +24,18 @@ struct BoardsView: View {
                     boardList
                 }
             }
-            .navigationTitle("Boards")
+            .navigationTitle("Lists")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("New Board", systemImage: "plus") {
+                    Button("New List", systemImage: "plus") {
                         newBoardName = ""
                         isCreatingBoard = true
                     }
                 }
             }
-            .alert("New Board", isPresented: $isCreatingBoard) {
+            .alert("New List", isPresented: $isCreatingBoard) {
                 TextField("Workout, Surf, Project A", text: $newBoardName)
                 Button("Create") {
                     createBoard()
@@ -49,40 +49,40 @@ struct BoardsView: View {
     }
 
     private var emptyState: some View {
-        Text("Boards you create will live here")
+        Text("Lists you create will live here")
             .font(.system(.body, design: .serif))
             .foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var boardList: some View {
-        List {
-            ForEach(boards) { board in
-                NavigationLink {
-                    BoardDetailView(board: board)
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(board.name)
-                            .font(.system(.body, design: .serif))
-                            .foregroundStyle(.primary)
-
-                        Text(noteCountLabel(for: board))
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.vertical, 6)
+        ThumbCloud(items: boards, key: { boardKey($0) }) { board in
+            NavigationLink {
+                BoardDetailView(board: board)
+            } label: {
+                VStack(spacing: 2) {
+                    Text(board.name)
+                        .font(.system(ThumbCloudStyle.size(for: boardKey(board)), design: .serif))
+                        .foregroundStyle(.primary)
+                    Text(noteCountLabel(for: board))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-                .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color(.systemBackground))
+                .multilineTextAlignment(.center)
             }
-            .onDelete(perform: deleteBoards)
+            .buttonStyle(.plain)
+            .contextMenu {
+                Button("Delete List", systemImage: "trash", role: .destructive) {
+                    modelContext.delete(board)
+                    try? modelContext.save()
+                }
+            }
         }
-        .listStyle(.plain)
-        .scrollIndicators(.hidden)
-        .scrollContentBackground(.hidden)
-        .contentMargins(.bottom, 96, for: .scrollContent)
         .background(Color(.systemBackground))
+    }
+
+    private func boardKey(_ board: Board) -> String {
+        String(describing: board.persistentModelID)
     }
 
     private func noteCountLabel(for board: Board) -> String {
@@ -98,12 +98,6 @@ struct BoardsView: View {
         newBoardName = ""
     }
 
-    private func deleteBoards(at offsets: IndexSet) {
-        for index in offsets {
-            modelContext.delete(boards[index])
-        }
-        try? modelContext.save()
-    }
 }
 
 struct BoardDetailView: View {
@@ -118,11 +112,11 @@ struct BoardDetailView: View {
     var body: some View {
         Group {
             if sortedNotes.isEmpty {
-                Text("Nothing on this board yet")
+                Text("Nothing on this list yet")
                     .font(.system(.body, design: .serif))
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+                } else {
                 List {
                     ForEach(sortedNotes) { note in
                         NavigationLink {
@@ -203,50 +197,48 @@ struct BoardPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if !boards.isEmpty {
-                    Section {
-                        ForEach(boards) { board in
-                            Button {
-                                if completesOnPick {
-                                    if !note.isOn(board) {
-                                        note.toggleBoard(board)
-                                    }
-                                    try? modelContext.save()
-                                    onPlaced()
-                                    dismiss()
-                                } else {
-                                    note.toggleBoard(board)
-                                    try? modelContext.save()
-                                }
-                            } label: {
-                                HStack {
-                                    Text(board.name)
-                                        .font(.system(.body, design: .serif))
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    if note.isOn(board) {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(.primary)
-                                    }
-                                }
+            VStack(spacing: 0) {
+                ThumbCloud(items: boards, key: { String(describing: $0.persistentModelID) }, bottomReserve: 16) { board in
+                    Button {
+                        if completesOnPick {
+                            if !note.isOn(board) {
+                                note.toggleBoard(board)
+                            }
+                            try? modelContext.save()
+                            onPlaced()
+                            dismiss()
+                        } else {
+                            note.toggleBoard(board)
+                            try? modelContext.save()
+                        }
+                    } label: {
+                        VStack(spacing: 3) {
+                            Text(board.name)
+                                .font(.system(ThumbCloudStyle.size(for: String(describing: board.persistentModelID)), design: .serif))
+                                .foregroundStyle(.primary)
+                            if note.isOn(board) {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.primary)
                             }
                         }
+                        .multilineTextAlignment(.center)
                     }
+                    .buttonStyle(.plain)
                 }
 
-                Section {
-                    HStack {
-                        TextField("New board", text: $newBoardName)
-                            .font(.system(.body, design: .serif))
-                        Button("Add") {
-                            createBoardAndAssign()
-                        }
-                        .disabled(newBoardName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                HStack {
+                    TextField("New list", text: $newBoardName)
+                        .font(.system(.body, design: .serif))
+                    Button("Add") {
+                        createBoardAndAssign()
                     }
+                    .disabled(newBoardName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 14)
             }
-            .navigationTitle("Boards")
+            .navigationTitle("Lists")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -274,4 +266,146 @@ struct BoardPickerSheet: View {
             dismiss()
         }
     }
+}
+
+private enum ThumbCloudStyle {
+    static func size(for key: String) -> Font.TextStyle {
+        switch stableHash(key) % 3 {
+        case 0: .body
+        case 1: .title3
+        default: .title2
+        }
+    }
+}
+
+private struct CloudItemSize: PreferenceKey {
+    static var defaultValue: [String: CGSize] = [:]
+
+    static func reduce(value: inout [String: CGSize], nextValue: () -> [String: CGSize]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct ThumbCloud<Item: Identifiable, Content: View>: View {
+    var items: [Item]
+    var key: (Item) -> String
+    var bottomReserve: CGFloat = 120
+    @ViewBuilder var content: (Item) -> Content
+
+    @State private var measured: [String: CGSize] = [:]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let columnWidth = ThumbSpot.columnWidth(in: geometry.size.width)
+            let layout = ThumbSpot.layout(
+                entries: items.map { item in
+                    let itemKey = key(item)
+                    let size = measured[itemKey] ?? CGSize(width: min(columnWidth, 88), height: 36)
+                    return (key: itemKey, size: size)
+                },
+                viewport: geometry.size,
+                columnWidth: columnWidth,
+                bottomReserve: bottomReserve
+            )
+            ScrollView {
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                        .frame(width: geometry.size.width, height: layout.height)
+                    ForEach(items) { item in
+                        content(item)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: columnWidth)
+                            .background {
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: CloudItemSize.self,
+                                        value: [key(item): proxy.size]
+                                    )
+                                }
+                            }
+                            .position(layout.positions[key(item)] ?? CGPoint(x: geometry.size.width / 2, y: layout.height - bottomReserve))
+                    }
+                }
+                .frame(width: geometry.size.width, height: layout.height)
+            }
+            .scrollIndicators(.hidden)
+            .defaultScrollAnchor(.bottom)
+            .onPreferenceChange(CloudItemSize.self) { next in
+                guard sizesChanged(measured, next) else { return }
+                measured = next
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func sizesChanged(_ current: [String: CGSize], _ next: [String: CGSize]) -> Bool {
+        guard current.count == next.count else { return true }
+        for (itemKey, size) in next {
+            guard let existing = current[itemKey] else { return true }
+            if abs(existing.width - size.width) > 1 || abs(existing.height - size.height) > 1 {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private enum ThumbSpot {
+    static func columnWidth(in width: CGFloat) -> CGFloat {
+        let sideInset: CGFloat = 18
+        let gap: CGFloat = 16
+        return max((width - sideInset * 2 - gap * 2) / 3, 1)
+    }
+
+    static func layout(
+        entries: [(key: String, size: CGSize)],
+        viewport: CGSize,
+        columnWidth: CGFloat,
+        bottomReserve: CGFloat
+    ) -> (positions: [String: CGPoint], height: CGFloat) {
+        let sideInset: CGFloat = 18
+        let gapX: CGFloat = 16
+        let gapY: CGFloat = 18
+        let columnX = (0..<3).map { index in
+            sideInset + columnWidth / 2 + CGFloat(index) * (columnWidth + gapX)
+        }
+        let ordered = entries
+            .map { entry in
+                (key: entry.key, hash: stableHash(entry.key), size: entry.size, column: Int(stableHash(entry.key) % 3))
+            }
+            .sorted { $0.hash < $1.hash }
+
+        var cursor = [CGFloat](repeating: 0, count: 3)
+        var fromBottom: [(key: String, point: CGPoint)] = []
+        for entry in ordered {
+            let y = cursor[entry.column] + gapY + entry.size.height / 2
+            cursor[entry.column] = y + entry.size.height / 2
+            let spare = max(0, columnWidth - entry.size.width)
+            let jitter = (CGFloat(entry.hash % 1000) / 999 - 0.5) * spare
+            fromBottom.append((
+                key: entry.key,
+                point: CGPoint(x: columnX[entry.column] + jitter, y: y)
+            ))
+        }
+
+        let packed = (cursor.max() ?? 0) + gapY
+        let height = max(viewport.height, packed + bottomReserve + 8)
+        var positions: [String: CGPoint] = [:]
+        for entry in fromBottom {
+            positions[entry.key] = CGPoint(
+                x: entry.point.x,
+                y: height - bottomReserve - entry.point.y
+            )
+        }
+        return (positions, height)
+    }
+}
+
+private func stableHash(_ key: String) -> UInt64 {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in key.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= 1_099_511_628_211
+    }
+    return hash
 }

@@ -33,7 +33,7 @@ struct PocketBookApp: App {
 
 @Observable
 final class RecentDelete {
-    private(set) var snapshot: Snapshot?
+    private(set) var snapshots: [Snapshot] = []
 
     struct Snapshot {
         var text: String
@@ -45,45 +45,55 @@ final class RecentDelete {
         var imageFileNames: [String]
         var revisitDone: Bool
         var revisitAfter: Date?
+
+        init(_ note: Note) {
+            text = note.text
+            createdAt = note.createdAt
+            boards = note.boards
+            audioFileName = note.audioFileName
+            audioDuration = note.audioDuration
+            transcript = note.transcript
+            imageFileNames = note.imageFileNames
+            revisitDone = note.revisitDone
+            revisitAfter = note.revisitAfter
+        }
     }
 
-    var canUndo: Bool { snapshot != nil }
+    var canUndo: Bool { !snapshots.isEmpty }
 
     func remember(_ note: Note) {
-        if let previous = snapshot {
-            if previous.audioFileName != note.audioFileName {
-                VoiceMemoStore.delete(previous.audioFileName)
+        remember([note])
+    }
+
+    func remember(_ notes: [Note]) {
+        let incomingAudio = Set(notes.compactMap(\.audioFileName))
+        let incomingImages = Set(notes.flatMap(\.imageFileNames))
+        for previous in snapshots {
+            if let audio = previous.audioFileName, !incomingAudio.contains(audio) {
+                VoiceMemoStore.delete(audio)
             }
-            for name in previous.imageFileNames {
+            for name in previous.imageFileNames where !incomingImages.contains(name) {
                 NoteImageStore.delete(name)
             }
         }
-        snapshot = Snapshot(
-            text: note.text,
-            createdAt: note.createdAt,
-            boards: note.boards,
-            audioFileName: note.audioFileName,
-            audioDuration: note.audioDuration,
-            transcript: note.transcript,
-            imageFileNames: note.imageFileNames,
-            revisitDone: note.revisitDone,
-            revisitAfter: note.revisitAfter
-        )
+        snapshots = notes.map(Snapshot.init)
     }
 
     func undo(in context: ModelContext) {
-        guard let snapshot else { return }
-        let note = Note(text: snapshot.text, createdAt: snapshot.createdAt)
-        context.insert(note)
-        note.boards = snapshot.boards
-        note.audioFileName = snapshot.audioFileName
-        note.audioDuration = snapshot.audioDuration
-        note.transcript = snapshot.transcript
-        note.imageFileNames = snapshot.imageFileNames
-        note.revisitDone = snapshot.revisitDone
-        note.revisitAfter = snapshot.revisitAfter
+        guard !snapshots.isEmpty else { return }
+        for snapshot in snapshots {
+            let note = Note(text: snapshot.text, createdAt: snapshot.createdAt)
+            context.insert(note)
+            note.boards = snapshot.boards
+            note.audioFileName = snapshot.audioFileName
+            note.audioDuration = snapshot.audioDuration
+            note.transcript = snapshot.transcript
+            note.imageFileNames = snapshot.imageFileNames
+            note.revisitDone = snapshot.revisitDone
+            note.revisitAfter = snapshot.revisitAfter
+        }
         try? context.save()
-        self.snapshot = nil
+        snapshots = []
     }
 }
 
@@ -111,7 +121,6 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: PocketTab = .timeline
     @State private var timelineTopToken = 0
-    @State private var searchBarOpen = false
     @State private var searchQuery = ""
     @State private var recentSearches = RecentSearches.load()
     @State private var keyboardOverlap: CGFloat = 0
@@ -123,7 +132,7 @@ struct RootView: View {
     }
 
     private var navDropsBehindKeyboard: Bool {
-        keyboardOverlap > 0 && !searchFieldFocused
+        selectedTab != .search && keyboardOverlap > 0 && !searchFieldFocused
     }
 
     var body: some View {
@@ -136,7 +145,7 @@ struct RootView: View {
                 Tab("Search", systemImage: "magnifyingglass", value: PocketTab.search) {
                     SearchView(
                         query: $searchQuery,
-                        isFieldFocused: searchFieldFocused,
+                        isSearchFocused: $searchFieldFocused,
                         recents: recentSearches,
                         onPickRecent: pickRecent,
                         onOpenNote: dismissSearchKeyboard
@@ -147,7 +156,7 @@ struct RootView: View {
                     RevisitView()
                 }
 
-                Tab("Boards", systemImage: "square.stack", value: PocketTab.boards) {
+                Tab("Lists", systemImage: "square.stack", value: PocketTab.boards) {
                     BoardsView()
                 }
             }
@@ -157,17 +166,12 @@ struct RootView: View {
 
             StreamNavBar(
                 selectedTab: selectedTab,
-                searchBarOpen: searchBarOpen,
-                query: $searchQuery,
-                isSearchFocused: $searchFieldFocused,
-                onSelect: selectTab,
-                onSubmit: commitSearch,
-                onCloseSearch: closeSearch
+                onSelect: selectTab
             )
             .padding(.bottom, navDropsBehindKeyboard ? 0 : 8)
             .offset(y: navDropsBehindKeyboard ? keyboardOverlap : 0)
-            .opacity(hidesNav ? 0 : 1)
-            .allowsHitTesting(!hidesNav && !navDropsBehindKeyboard)
+            .opacity(hidesNav || searchFieldFocused ? 0 : 1)
+            .allowsHitTesting(!hidesNav && !searchFieldFocused && !navDropsBehindKeyboard)
         }
         .environment(\.pocketNavHidden, $hidesNav)
         .environment(recentDelete)
@@ -175,23 +179,30 @@ struct RootView: View {
         .task {
             let notes = (try? modelContext.fetch(FetchDescriptor<Note>())) ?? []
             var keptAudio = Set(notes.compactMap(\.audioFileName))
-            if let pending = recentDelete.snapshot?.audioFileName {
-                keptAudio.insert(pending)
+            for pending in recentDelete.snapshots {
+                if let audio = pending.audioFileName {
+                    keptAudio.insert(audio)
+                }
             }
             VoiceMemoStore.deleteAll(except: keptAudio)
 
             var keptImages = Set(notes.flatMap(\.imageFileNames))
-            if let pending = recentDelete.snapshot?.imageFileNames {
-                keptImages.formUnion(pending)
+            for pending in recentDelete.snapshots {
+                keptImages.formUnion(pending.imageFileNames)
             }
             NoteImageStore.deleteAll(except: keptImages)
         }
         .onChange(of: searchFieldFocused) { _, focused in
             if !focused {
                 commitSearch()
+                keyboardOverlap = 0
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard selectedTab != .search, !searchFieldFocused else {
+                keyboardOverlap = 0
+                return
+            }
             guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
             let screenHeight = (note.object as? UIView)?.window?.windowScene?.screen.bounds.height
                 ?? UIApplication.shared.connectedScenes
@@ -211,16 +222,16 @@ struct RootView: View {
             timelineTopToken += 1
             return
         }
-        if tab != .search {
-            searchFieldFocused = false
-        }
-        withAnimation(.easeOut(duration: 0.22)) {
-            searchBarOpen = tab == .search
-        }
+        searchFieldFocused = tab == .search
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             selectedTab = tab
+        }
+        if tab == .search {
+            DispatchQueue.main.async {
+                searchFieldFocused = true
+            }
         }
     }
 
@@ -239,16 +250,10 @@ struct RootView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
-    private func closeSearch() {
-        dismissSearchKeyboard()
-        withAnimation(.easeOut(duration: 0.22)) {
-            searchBarOpen = false
-        }
-    }
 }
 
 private enum ScrollFriction {
-    static let rate = UIScrollView.DecelerationRate(rawValue: 0.9)
+    static let rate = UIScrollView.DecelerationRate(rawValue: 0.93)
 
     static let install: Void = {
         let cls: AnyClass = UIScrollView.self

@@ -12,7 +12,7 @@ import UIKit
 
 struct SearchView: View {
     @Binding var query: String
-    var isFieldFocused: Bool
+    var isSearchFocused: FocusState<Bool>.Binding
     var recents: [String]
     var onPickRecent: (String) -> Void
     var onOpenNote: () -> Void
@@ -35,26 +35,37 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Looking for something?")
-                    .font(.system(.title2, design: .serif).weight(.bold))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: showsPromptCentered ? .center : .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.top, showsPromptCentered ? 72 : 28)
-                    .padding(.bottom, 18)
+                searchField
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
 
                 if !trimmedQuery.isEmpty {
                     searchResults
-                } else if !isFieldFocused && !recents.isEmpty {
+                } else if !recents.isEmpty {
                     recentSearches
                 } else {
-                    Spacer()
+                    Text("Looking for something?")
+                        .font(.system(.body, design: .serif))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color(.systemBackground))
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button {
+                        isSearchFocused.wrappedValue = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                    .accessibilityLabel("Dismiss Keyboard")
+                }
+            }
             .navigationDestination(item: $openedNoteID) { id in
                 if let note = notes.first(where: { $0.persistentModelID == id }) {
                     NoteDetailView(note: note)
@@ -64,8 +75,41 @@ struct SearchView: View {
         .tint(.primary)
     }
 
-    private var showsPromptCentered: Bool {
-        trimmedQuery.isEmpty && (isFieldFocused || recents.isEmpty)
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "",
+                text: $query,
+                prompt: Text("Search").foregroundStyle(.tertiary)
+            )
+            .font(.system(.body, design: .serif))
+            .focused(isSearchFocused)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .submitLabel(.search)
+            .onSubmit {
+                isSearchFocused.wrappedValue = false
+            }
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private var recentSearches: some View {
@@ -91,9 +135,10 @@ struct SearchView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, 96)
+            .padding(.bottom, isSearchFocused.wrappedValue ? 16 : 88)
         }
         .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     @ViewBuilder
@@ -121,8 +166,8 @@ struct SearchView: View {
             .listStyle(.plain)
             .scrollIndicators(.hidden)
             .scrollContentBackground(.hidden)
-            .scrollDismissesKeyboard(.never)
-            .contentMargins(.bottom, 96, for: .scrollContent)
+            .scrollDismissesKeyboard(.interactively)
+            .contentMargins(.bottom, isSearchFocused.wrappedValue ? 16 : 88, for: .scrollContent)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -297,7 +342,7 @@ struct NoteDetailView: View {
                                 isArrangingPhotos = true
                             }
                         }
-                        Button("Boards", systemImage: "square.stack") {
+                        Button("Lists", systemImage: "square.stack") {
                             showingBoardPicker = true
                         }
                         if let sourceBoard {

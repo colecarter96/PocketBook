@@ -17,7 +17,7 @@ enum NotePressAction: Hashable {
         switch self {
         case .copy: "Copy"
         case .memo: "Memo"
-        case .board: "Board"
+        case .board: "List"
         case .photos: "Photos"
         case .delete: "Delete"
         }

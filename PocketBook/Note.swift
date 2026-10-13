@@ -32,6 +32,12 @@ final class Note {
         self.revisitAfter = nil
     }
 
+    var isBlank: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && audioFileName == nil
+            && imageFileNames.isEmpty
+    }
+
     func isOn(_ board: Board) -> Bool {
         boards.contains { $0.persistentModelID == board.persistentModelID }
     }
