@@ -49,6 +49,8 @@ struct TimelineView: View {
     @State private var composeTopToken = 0
     @State private var isSelecting = false
     @State private var selectedNoteIDs: Set<PersistentIdentifier> = []
+    @AppStorage("pocketbook.appearance") private var appearanceRaw = ""
+    @Environment(\.colorScheme) private var colorScheme
 
     private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
@@ -65,13 +67,6 @@ struct TimelineView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .toolbar(.hidden, for: .tabBar)
-            .toolbarColorScheme(headerHidden < statusBarHeight ? .dark : .light, for: .navigationBar)
-            .overlay(alignment: .top) {
-                streamHeader
-                    .offset(y: streamHeaderSlide)
-                    .ignoresSafeArea(edges: .top)
-            }
             .background {
                 GeometryReader { geometry in
                     Color.clear
@@ -99,7 +94,7 @@ struct TimelineView: View {
                     }
                 }
                 .padding(.trailing, 30)
-                .padding(.bottom, 78)
+                .padding(.bottom, PocketBarClearance.control)
             }
             .scrollDismissesKeyboard(.never)
             .photosPicker(
@@ -176,26 +171,21 @@ struct TimelineView: View {
         statusBarHeight + StreamHeader.height
     }
 
-    private var streamHeader: some View {
-        VStack(spacing: 0) {
-            Color.black
-                .frame(height: statusBarHeight)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: requestHeaderTop)
-
-            HStack(alignment: .center, spacing: 0) {
-                Button(action: requestHeaderTop) {
+    private var streamMasthead: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Button(action: requestHeaderTop) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Stream")
-                        .font(.custom("HelveticaNeue-Medium", size: 22))
+                        .font(.largeTitle.bold())
                         .foregroundStyle(.primary)
-                        .padding(.leading, 22)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                    
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-                if isSelecting {
+            if isSelecting {
                     Button(action: deleteSelected) {
                         Image(systemName: "trash")
                             .font(.system(size: 16, weight: .medium))
@@ -215,6 +205,16 @@ struct TimelineView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
+                    Button(action: toggleAppearance) {
+                        Image(systemName: colorScheme == .light ? "sun.max" : "sun.max.fill")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(colorScheme == .light ? Color.primary.opacity(0.35) : Color.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(colorScheme == .light ? "Switch to Dark Mode" : "Switch to Light Mode")
+
                     Menu {
                         Button("New Note", systemImage: "plus") {
                             startNewNote()
@@ -232,17 +232,16 @@ struct TimelineView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Menu")
                 }
-            }
-            .padding(.trailing, 12)
-            .frame(height: StreamHeader.height)
-            .frame(maxWidth: .infinity)
-            .background(Color(.systemBackground))
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .padding(.bottom, 8)
     }
 
     private func requestHeaderTop() {
         headerTopToken += 1
+    }
+
+    private func toggleAppearance() {
+        appearanceRaw = colorScheme == .light ? "dark" : "light"
     }
 
     private func resolvedStatusBarHeight(_ inset: CGFloat) -> CGFloat {
@@ -257,28 +256,30 @@ struct TimelineView: View {
         Button(action: startNewNote) {
             Image(systemName: "plus")
                 .font(.title3.weight(.medium))
-                .foregroundStyle(.black)
+                .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
-                .background(.white, in: Circle())
-                .shadow(color: .black.opacity(0.16), radius: 10, y: 3)
+                .background(.black, in: Circle())
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
         }
         .accessibilityLabel("New Note")
     }
 
     private var emptyState: some View {
-        Text("Nothing captured yet")
-            .font(.system(.body, design: .serif))
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(alignment: .leading, spacing: 0) {
+            streamMasthead
+            Text("Nothing captured yet")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private var timeline: some View {
         ScrollViewReader { proxy in
             List {
-                Color.clear
-                .frame(height: StreamHeader.height + 32)
+                streamMasthead
                 .id(TimelineAnchor.top)
-                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 16))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 ForEach(notes) { note in
@@ -365,7 +366,7 @@ struct TimelineView: View {
             .overlay(alignment: .trailing) {
                 if canUseRail {
                     GeometryReader { geometry in
-                        let railSpan = max(geometry.size.height - 28 - 96, 1)
+                        let railSpan = max(geometry.size.height - 28 - PocketBarClearance.rail, 1)
                         let topCut = railSpan * (1 - 0.85 * 0.85)
                         TimeRail(
                             progress: railProgress,
@@ -381,7 +382,7 @@ struct TimelineView: View {
                             }
                         )
                         .padding(.top, 28 + topCut)
-                        .padding(.bottom, 96)
+                        .padding(.bottom, PocketBarClearance.rail)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                         .opacity(isEditing || isSelecting ? 0 : 1)
                         .allowsHitTesting(!isEditing && !isSelecting)
@@ -828,11 +829,15 @@ private struct NoteRow: View {
                 }, onLibrary: onLibrary, onCamera: onCamera)
                 .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
             } else {
+                Text(streamStamp)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
                 Text(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add note..." : note.text)
-                    .font(.system(.body, design: .serif))
+                    .font(.body)
                     .foregroundStyle(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(.darkGray) : .primary)
                     .multilineTextAlignment(.leading)
-                    .lineLimit(note.audioFileName == nil ? 8 : 4)
+                    .lineLimit(note.audioFileName == nil ? 6 : 4)
                     .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
             }
 
@@ -853,13 +858,9 @@ private struct NoteRow: View {
                 isArranging: isArrangingPhotos,
                 onOpen: onOpenImage
             )
-
-            Text(note.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                .font(.caption)
-                .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 22)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay {
             if !isEditing {
@@ -877,6 +878,18 @@ private struct NoteRow: View {
                 transcriptEditing = false
             }
         }
+    }
+
+    private var streamStamp: String {
+        let time = note.createdAt.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(note.createdAt) {
+            return "Today · \(time)"
+        }
+        if Calendar.current.isDateInYesterday(note.createdAt) {
+            return "Yesterday · \(time)"
+        }
+        let day = note.createdAt.formatted(.dateTime.month(.abbreviated).day())
+        return "\(day) · \(time)"
     }
 
     private func handleCardTap(_ point: CGPoint) {

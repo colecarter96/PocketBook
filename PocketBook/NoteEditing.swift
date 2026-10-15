@@ -234,11 +234,7 @@ struct NoteTextView: UIViewRepresentable {
         return CGSize(width: width, height: max(22, ceil(height)))
     }
 
-    private static let serifBody: UIFont = {
-        let base = UIFont.preferredFont(forTextStyle: .body)
-        guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
-        return UIFont(descriptor: descriptor, size: base.pointSize)
-    }()
+    private static let serifBody: UIFont = UIFont.preferredFont(forTextStyle: .body)
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var note: Note

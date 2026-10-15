@@ -24,17 +24,7 @@ struct BoardsView: View {
                     boardList
                 }
             }
-            .navigationTitle("Lists")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .tabBar)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("New List", systemImage: "plus") {
-                        newBoardName = ""
-                        isCreatingBoard = true
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .alert("New List", isPresented: $isCreatingBoard) {
                 TextField("Workout, Surf, Project A", text: $newBoardName)
                 Button("Create") {
@@ -49,35 +39,102 @@ struct BoardsView: View {
     }
 
     private var emptyState: some View {
-        Text("Lists you create will live here")
-            .font(.system(.body, design: .serif))
-            .foregroundStyle(.tertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Lists")
+                .font(.largeTitle.bold())
+            Text("Group your thoughts.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Lists you create will live here")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .overlay(alignment: .topTrailing) {
+            Button {
+                newBoardName = ""
+                isCreatingBoard = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 12)
+            .accessibilityLabel("New List")
+        }
+    }
+
+    private var sortedBoards: [Board] {
+        boards.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private var boardList: some View {
-        ThumbCloud(items: boards, key: { boardKey($0) }) { board in
-            NavigationLink {
-                BoardDetailView(board: board)
-            } label: {
-                VStack(spacing: 2) {
-                    Text(board.name)
-                        .font(.system(ThumbCloudStyle.size(for: boardKey(board)), design: .serif))
-                        .foregroundStyle(.primary)
-                    Text(noteCountLabel(for: board))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+        List {
+            Section {
+                ForEach(sortedBoards) { board in
+                    NavigationLink {
+                        BoardDetailView(board: board)
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: "square.stack")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .frame(width: 36, height: 36)
+                                .background(Color(.secondarySystemBackground), in: Circle())
+                            Text(board.name)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                            Spacer(minLength: 8)
+                            Text("\(board.notes.count)")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .contextMenu {
+                        Button("Delete List", systemImage: "trash", role: .destructive) {
+                            modelContext.delete(board)
+                            try? modelContext.save()
+                        }
+                    }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color(.systemBackground))
                 }
-                .multilineTextAlignment(.center)
-            }
-            .buttonStyle(.plain)
-            .contextMenu {
-                Button("Delete List", systemImage: "trash", role: .destructive) {
-                    modelContext.delete(board)
-                    try? modelContext.save()
+            } header: {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Lists")
+                            .font(.largeTitle.bold())
+                            .foregroundStyle(.primary)
+                            .textCase(nil)
+                        Text("Group your thoughts.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .textCase(nil)
+                    }
+                    Spacer()
+                    Button {
+                        newBoardName = ""
+                        isCreatingBoard = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("New List")
                 }
+                .padding(.bottom, 8)
             }
         }
+        .listStyle(.plain)
+        .scrollIndicators(.hidden)
+        .scrollContentBackground(.hidden)
+        .contentMargins(.bottom, PocketBarClearance.scroll, for: .scrollContent)
         .background(Color(.systemBackground))
     }
 
@@ -124,7 +181,7 @@ struct BoardDetailView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(note.text.isEmpty ? "Empty note" : note.text)
-                                    .font(.system(.body, design: .serif))
+                                    .font(.body)
                                     .foregroundStyle(note.text.isEmpty ? .tertiary : .primary)
                                     .lineLimit(4)
 
@@ -156,7 +213,7 @@ struct BoardDetailView: View {
                 .listStyle(.plain)
                 .scrollIndicators(.hidden)
                 .scrollContentBackground(.hidden)
-                .contentMargins(.bottom, 96, for: .scrollContent)
+                .contentMargins(.bottom, PocketBarClearance.scroll, for: .scrollContent)
                 .background(Color(.systemBackground))
             }
         }

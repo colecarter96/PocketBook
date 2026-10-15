@@ -35,10 +35,19 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
-                searchField
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 12)
+                HStack(spacing: 12) {
+                    searchField
+                    if isSearchFocused.wrappedValue {
+                        Button("Cancel") {
+                            isSearchFocused.wrappedValue = false
+                        }
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
 
                 if !trimmedQuery.isEmpty {
                     searchResults
@@ -46,7 +55,7 @@ struct SearchView: View {
                     recentSearches
                 } else {
                     Text("Looking for something?")
-                        .font(.system(.body, design: .serif))
+                        .font(.body)
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -54,7 +63,6 @@ struct SearchView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color(.systemBackground))
             .toolbar(.hidden, for: .navigationBar)
-            .toolbar(.hidden, for: .tabBar)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -86,7 +94,7 @@ struct SearchView: View {
                 text: $query,
                 prompt: Text("Search").foregroundStyle(.tertiary)
             )
-            .font(.system(.body, design: .serif))
+            .font(.body)
             .focused(isSearchFocused)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -124,7 +132,7 @@ struct SearchView: View {
                                 .font(.body)
                                 .foregroundStyle(.tertiary)
                             Text(term)
-                                .font(.system(.body, design: .serif))
+                                .font(.body)
                                 .foregroundStyle(.primary)
                             Spacer(minLength: 0)
                         }
@@ -135,7 +143,7 @@ struct SearchView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, isSearchFocused.wrappedValue ? 16 : 88)
+            .padding(.bottom, isSearchFocused.wrappedValue ? 16 : PocketBarClearance.scroll)
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
@@ -145,7 +153,7 @@ struct SearchView: View {
     private var searchResults: some View {
         if matches.isEmpty {
             Text("No matches")
-                .font(.system(.body, design: .serif))
+                .font(.body)
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -167,7 +175,7 @@ struct SearchView: View {
             .scrollIndicators(.hidden)
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .contentMargins(.bottom, isSearchFocused.wrappedValue ? 16 : 88, for: .scrollContent)
+            .contentMargins(.bottom, isSearchFocused.wrappedValue ? 16 : PocketBarClearance.scroll, for: .scrollContent)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -180,7 +188,7 @@ private struct SearchResultRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(highlightedSnippet)
-                .font(.system(.body, design: .serif))
+                .font(.body)
                 .foregroundStyle(.primary)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
@@ -203,7 +211,8 @@ private struct SearchResultRow: View {
         ) {
             if let lower = AttributedString.Index(match.lowerBound, within: attributed),
                let upper = AttributedString.Index(match.upperBound, within: attributed) {
-                attributed[lower..<upper].font = .system(.body, design: .serif).weight(.semibold)
+                attributed[lower..<upper].font = .body.weight(.semibold)
+                attributed[lower..<upper].backgroundColor = Color.yellow.opacity(0.45)
             }
             searchStart = match.upperBound
         }
