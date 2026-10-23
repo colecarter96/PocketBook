@@ -368,15 +368,39 @@ private final class CheckPillButton: UIControl {
     }
 }
 
-struct NoteTextView: UIViewRepresentable {
+struct NoteTextView: View {
+    @Environment(PocketSettings.self) private var settings
     var note: Note
     var editor: TimelineEditor
     var fillsSpace = false
     var onHeight: (CGFloat) -> Void
     var onLibrary: () -> Void
     var onCamera: () -> Void
+
+    var body: some View {
+        NoteTextRepresentable(
+            note: note,
+            editor: editor,
+            fillsSpace: fillsSpace,
+            font: settings.reading.bodyUIFont,
+            ink: settings.colorway.ink,
+            onHeight: onHeight,
+            onLibrary: onLibrary,
+            onCamera: onCamera
+        )
+    }
+}
+
+private struct NoteTextRepresentable: UIViewRepresentable {
+    var note: Note
+    var editor: TimelineEditor
+    var fillsSpace = false
+    var font: UIFont
+    var ink: UIColor
+    var onHeight: (CGFloat) -> Void
+    var onLibrary: () -> Void
+    var onCamera: () -> Void
     @Environment(VoiceMemoController.self) private var voice
-    @Environment(\.pocketReading) private var reading
 
     func makeCoordinator() -> Coordinator {
         Coordinator(note: note, editor: editor, onHeight: onHeight)
@@ -385,9 +409,9 @@ struct NoteTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         textView.backgroundColor = .clear
-        textView.textColor = .label
-        textView.tintColor = .label
-        textView.font = reading.bodyUIFont
+        textView.textColor = ink
+        textView.tintColor = ink
+        textView.font = font
         textView.isScrollEnabled = fillsSpace
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
@@ -427,7 +451,9 @@ struct NoteTextView: UIViewRepresentable {
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.text {
             textView.text = note.text
         }
-        textView.font = reading.bodyUIFont
+        textView.font = font
+        textView.textColor = ink
+        textView.tintColor = ink
         context.coordinator.syncPlaceholder(on: textView)
         editor.register(note.persistentModelID, view: textView)
         context.coordinator.publishHeight(of: textView)
@@ -498,7 +524,7 @@ struct NoteTextView: UIViewRepresentable {
             let label = UILabel()
             label.tag = Self.placeholderTag
             label.text = "Add note..."
-            label.textColor = .darkGray
+            label.textColor = textView.textColor?.withAlphaComponent(0.45)
             label.font = textView.font
             label.isUserInteractionEnabled = false
             textView.addSubview(label)
@@ -508,6 +534,7 @@ struct NoteTextView: UIViewRepresentable {
         func syncPlaceholder(on textView: UITextView) {
             guard let label = textView.viewWithTag(Self.placeholderTag) as? UILabel else { return }
             label.font = textView.font
+            label.textColor = textView.textColor?.withAlphaComponent(0.45)
             let line = ceil(textView.font?.lineHeight ?? 22)
             label.frame = CGRect(x: 0, y: 0, width: max(textView.bounds.width, 1), height: line)
             label.isHidden = !(textView.text ?? "").isEmpty

@@ -9,14 +9,16 @@ import SwiftData
 import SwiftUI
 
 struct BoardsView: View {
+    @Binding var openListID: PersistentIdentifier?
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Board.createdAt, order: .reverse) private var boards: [Board]
 
     @State private var isCreatingBoard = false
     @State private var newBoardName = ""
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if boards.isEmpty {
                     emptyState
@@ -25,6 +27,15 @@ struct BoardsView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: PersistentIdentifier.self) { id in
+                if let board = boards.first(where: { $0.persistentModelID == id }) {
+                    BoardDetailView(board: board)
+                }
+            }
+            .onAppear(perform: openPendingList)
+            .onChange(of: openListID) { _, _ in
+                openPendingList()
+            }
             .alert("New List", isPresented: $isCreatingBoard) {
                 TextField("Workout, Surf, Project A", text: $newBoardName)
                 Button("Create") {
@@ -145,6 +156,14 @@ struct BoardsView: View {
     private func noteCountLabel(for board: Board) -> String {
         let count = board.listedNotes.count
         return count == 1 ? "1 note" : "\(count) notes"
+    }
+
+    private func openPendingList() {
+        guard let id = openListID else { return }
+        var next = NavigationPath()
+        next.append(id)
+        path = next
+        openListID = nil
     }
 
     private func createBoard() {

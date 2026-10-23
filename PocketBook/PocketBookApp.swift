@@ -14,6 +14,7 @@ struct PocketBookApp: App {
     let container: ModelContainer
 
     init() {
+        PocketGeist.register()
         _ = ScrollFriction.install
         UIScrollView.appearance().decelerationRate = ScrollFriction.rate
         container = PocketStore.makeContainer()
@@ -22,6 +23,7 @@ struct PocketBookApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environment(PocketSettings.shared)
         }
         .modelContainer(container)
     }
@@ -148,6 +150,50 @@ enum PocketAppearance {
         default: nil
         }
     }
+
+    static func interfaceStyle(for colorway: PocketColorway) -> UIUserInterfaceStyle {
+        colorway == .dark ? .dark : .light
+    }
+}
+
+private struct AppearanceDriver: UIViewRepresentable {
+    var style: UIUserInterfaceStyle
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        apply(to: view.window)
+        if view.window == nil {
+            DispatchQueue.main.async { [weak view] in
+                apply(to: view?.window)
+            }
+        }
+    }
+
+    private func apply(to window: UIWindow?) {
+        guard let window, window.overrideUserInterfaceStyle != style else { return }
+        window.overrideUserInterfaceStyle = style
+        window.rootViewController?.overrideUserInterfaceStyle = style
+    }
+}
+
+extension PocketAppearance {
+    static func apply(_ colorway: PocketColorway) {
+        let style = interfaceStyle(for: colorway)
+        for scene in UIApplication.shared.connectedScenes {
+            guard let scene = scene as? UIWindowScene else { continue }
+            scene.traitOverrides.userInterfaceStyle = style
+            for window in scene.windows {
+                window.overrideUserInterfaceStyle = style
+                window.rootViewController?.overrideUserInterfaceStyle = style
+            }
+        }
+    }
 }
 
 enum PocketTab: Hashable {
@@ -182,24 +228,16 @@ struct RootView: View {
     @State private var recentSearches = RecentSearches.load()
     @State private var keyboardOverlap: CGFloat = 0
     @State private var hidesNav = false
+    @State private var openListID: PersistentIdentifier?
     @FocusState private var searchFieldFocused: Bool
-    @AppStorage("pocketbook.appearance") private var appearanceRaw = ""
-    @AppStorage("pocketbook.font") private var fontRaw = PocketFontChoice.helvetica.rawValue
-    @AppStorage("pocketbook.textSize") private var textSizeRaw = PocketTextSize.medium.rawValue
-    @AppStorage("pocketbook.colorway") private var colorwayRaw = ""
+    @Environment(PocketSettings.self) private var settings
 
     init() {
         _ = InstantTabSwitch.disable
         _ = PocketTabRetap.install
     }
 
-    private var reading: PocketReading {
-        PocketReading(
-            font: PocketFontChoice.stored(fontRaw),
-            size: PocketTextSize(rawValue: textSizeRaw) ?? .medium,
-            colorway: PocketColorway.current(colorwayRaw: colorwayRaw, appearanceRaw: appearanceRaw)
-        )
-    }
+    private var reading: PocketReading { settings.reading }
 
     private var navDropsBehindKeyboard: Bool {
         selectedTab != .search && keyboardOverlap > 0 && !searchFieldFocused
@@ -213,7 +251,8 @@ struct RootView: View {
                         scrollToTopToken: timelineTopToken,
                         newNoteToken: newNoteToken,
                         widgetNoteKey: widgetNoteKey,
-                        widgetOpenToken: widgetOpenToken
+                        widgetOpenToken: widgetOpenToken,
+                        onOpenList: openList
                     )
                 }
 
@@ -232,7 +271,7 @@ struct RootView: View {
                 }
 
                 Tab("Lists", systemImage: "square.grid.2x2", value: PocketTab.boards) {
-                    BoardsView()
+                    BoardsView(openListID: $openListID)
                 }
             }
             .modifier(PocketTabBarChrome(hidden: tabBarHidden))
@@ -254,9 +293,16 @@ struct RootView: View {
         .environment(recentDelete)
         .environment(recentFiling)
         .environment(voiceMemos)
+        .environment(\.colorScheme, reading.colorway.scheme)
         .preferredColorScheme(reading.colorway.scheme)
         .environment(\.pocketReading, reading)
         .background(reading.colorway.canvas.ignoresSafeArea())
+        .background {
+            AppearanceDriver(style: PocketAppearance.interfaceStyle(for: reading.colorway))
+        }
+        .onAppear {
+            PocketAppearance.apply(settings.colorway)
+        }
         .task {
             await PocketCloudStore.prepare()
             let notes = (try? modelContext.fetch(FetchDescriptor<Note>())) ?? []
@@ -342,6 +388,11 @@ struct RootView: View {
             return hidesNav || searchFieldFocused || navDropsBehindKeyboard
         }
         return true
+    }
+
+    private func openList(_ id: PersistentIdentifier) {
+        openListID = id
+        selectTab(.boards)
     }
 
     private func selectTab(_ tab: PocketTab) {

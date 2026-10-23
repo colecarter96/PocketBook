@@ -373,6 +373,7 @@ struct MemoTranscript: View {
     var editor: TimelineEditor
     var onLibrary: () -> Void
     var onCamera: () -> Void
+    @Environment(PocketSettings.self) private var settings
     @State private var editorHeight: CGFloat = 22
 
     var body: some View {
@@ -420,6 +421,8 @@ struct MemoTranscript: View {
                             onSave: {
                                 isEditing = false
                             },
+                            font: settings.reading.bodyUIFont,
+                            ink: settings.colorway.ink,
                             onLibrary: onLibrary,
                             onCamera: onCamera
                         )
@@ -454,9 +457,10 @@ private struct TranscriptTextView: UIViewRepresentable {
     var editor: TimelineEditor
     var onHeight: (CGFloat) -> Void
     var onSave: () -> Void
+    var font: UIFont
+    var ink: UIColor
     var onLibrary: () -> Void
     var onCamera: () -> Void
-    @Environment(\.pocketReading) private var reading
     @Environment(VoiceMemoController.self) private var voice
 
     func makeCoordinator() -> Coordinator {
@@ -466,9 +470,9 @@ private struct TranscriptTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         textView.backgroundColor = .clear
-        textView.textColor = .label
-        textView.tintColor = .label
-        textView.font = reading.bodyUIFont
+        textView.textColor = ink
+        textView.tintColor = ink
+        textView.font = font
         textView.isScrollEnabled = false
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
@@ -502,7 +506,9 @@ private struct TranscriptTextView: UIViewRepresentable {
             isRecording: voice.recordingNoteID == note.persistentModelID,
             canRecord: note.audioFileName == nil
         )
-        textView.font = reading.bodyUIFont
+        textView.font = font
+        textView.textColor = ink
+        textView.tintColor = ink
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.transcript {
             textView.text = note.transcript
         }

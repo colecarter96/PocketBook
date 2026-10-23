@@ -3,6 +3,7 @@
 //  PocketBook
 //
 
+import CoreText
 import SwiftUI
 import UIKit
 
@@ -116,7 +117,11 @@ enum PocketColorway: String, CaseIterable, Identifiable {
     }
 
     var canvas: Color {
-        Color(.systemBackground)
+        self == .dark ? Color.black : Color.white
+    }
+
+    var ink: UIColor {
+        self == .dark ? .white : .black
     }
 
     static func current(colorwayRaw: String, appearanceRaw: String) -> PocketColorway {
@@ -135,6 +140,15 @@ struct PocketReading: Equatable {
     }
     var bodyUIFont: UIFont { font.uiFont(size: size.pointSize) }
 
+    /// Medium is the timeline’s current spacing. Smaller type uses less padding.
+    var padScale: CGFloat { size.pointSize / PocketTextSize.medium.pointSize }
+
+    var metaPointSize: CGFloat { max(12, (size.pointSize * 0.78).rounded()) }
+
+    func metaFont(weight: Font.Weight = .regular) -> Font {
+        font.font(size: metaPointSize, weight: weight)
+    }
+
     static let standard = PocketReading(font: .helvetica, size: .medium, colorway: .light)
 }
 
@@ -149,20 +163,78 @@ extension EnvironmentValues {
     }
 }
 
+enum PocketGeist {
+    static let fontName = "Geist"
+
+    static func register() {
+        guard let url = Bundle.main.url(forResource: "Geist-Regular", withExtension: "ttf") else { return }
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+
+    static func font(size: CGFloat) -> Font {
+        .custom(fontName, size: size)
+    }
+}
+
+@MainActor
+@Observable
+final class PocketSettings {
+    static let shared = PocketSettings()
+
+    private static let fontKey = "pocketbook.font"
+    private static let sizeKey = "pocketbook.textSize"
+    private static let appearanceKey = "pocketbook.appearance"
+    private static let colorwayKey = "pocketbook.colorway"
+
+    var font: PocketFontChoice {
+        didSet { UserDefaults.standard.set(font.rawValue, forKey: Self.fontKey) }
+    }
+
+    var textSize: PocketTextSize {
+        didSet { UserDefaults.standard.set(textSize.rawValue, forKey: Self.sizeKey) }
+    }
+
+    var colorway: PocketColorway {
+        didSet {
+            UserDefaults.standard.set(colorway.rawValue, forKey: Self.appearanceKey)
+            UserDefaults.standard.set(colorway.rawValue, forKey: Self.colorwayKey)
+            PocketAppearance.apply(colorway)
+        }
+    }
+
+    var reading: PocketReading {
+        PocketReading(font: font, size: textSize, colorway: colorway)
+    }
+
+    func toggleAppearance() {
+        colorway = colorway == .light ? .dark : .light
+    }
+
+    private init() {
+        let storedFont = UserDefaults.standard.string(forKey: Self.fontKey) ?? PocketFontChoice.helvetica.rawValue
+        font = PocketFontChoice.stored(storedFont)
+        let storedSize = UserDefaults.standard.string(forKey: Self.sizeKey) ?? PocketTextSize.medium.rawValue
+        textSize = PocketTextSize(rawValue: storedSize) ?? .medium
+        let appearance = UserDefaults.standard.string(forKey: Self.appearanceKey) ?? ""
+        let storedColorway = UserDefaults.standard.string(forKey: Self.colorwayKey) ?? ""
+        colorway = PocketColorway.current(colorwayRaw: storedColorway, appearanceRaw: appearance)
+    }
+}
+
 struct PocketCanvas: View {
-    @Environment(\.pocketReading) private var reading
+    @Environment(PocketSettings.self) private var settings
 
     var body: some View {
-        reading.colorway.canvas
+        settings.colorway.canvas
     }
 }
 
 private struct PocketBodyFont: ViewModifier {
-    @Environment(\.pocketReading) private var reading
+    @Environment(PocketSettings.self) private var settings
     var weight: Font.Weight
 
     func body(content: Content) -> some View {
-        content.font(reading.bodyFont(weight: weight))
+        content.font(settings.reading.bodyFont(weight: weight))
     }
 }
 
@@ -174,16 +246,10 @@ extension View {
 
 struct ReadingSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("pocketbook.font") private var fontRaw = PocketFontChoice.helvetica.rawValue
-    @AppStorage("pocketbook.textSize") private var textSizeRaw = PocketTextSize.medium.rawValue
+    @Environment(PocketSettings.self) private var settings
 
-    private var font: PocketFontChoice {
-        PocketFontChoice.stored(fontRaw)
-    }
-
-    private var textSize: PocketTextSize {
-        PocketTextSize(rawValue: textSizeRaw) ?? .medium
-    }
+    private var font: PocketFontChoice { settings.font }
+    private var textSize: PocketTextSize { settings.textSize }
 
     var body: some View {
         NavigationStack {
@@ -202,7 +268,7 @@ struct ReadingSettingsSheet: View {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                         ForEach(PocketFontChoice.allCases) { choice in
                             Button {
-                                fontRaw = choice.rawValue
+                                settings.font = choice
                             } label: {
                                 Text(choice.title)
                                     .font(choice.font(size: 17, weight: .regular))
@@ -226,7 +292,7 @@ struct ReadingSettingsSheet: View {
                     HStack(spacing: 8) {
                         ForEach(PocketTextSize.allCases) { size in
                             Button {
-                                textSizeRaw = size.rawValue
+                                settings.textSize = size
                             } label: {
                                 Text(size.title)
                                     .font(font.font(size: size.pointSize * 0.72, weight: .medium))

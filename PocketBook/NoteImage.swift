@@ -117,6 +117,7 @@ struct NoteHitFrames: Equatable {
     var transcriptToggle: CGRect = .zero
     var transcriptField: CGRect = .zero
     var images: [String: CGRect] = [:]
+    var lists: [String: CGRect] = [:]
     var check: CGRect = .zero
 }
 
@@ -141,6 +142,7 @@ struct NoteHitPreference: PreferenceKey {
             value.check = next.check
         }
         value.images.merge(next.images, uniquingKeysWith: { $1 })
+        value.lists.merge(next.lists, uniquingKeysWith: { $1 })
     }
 }
 

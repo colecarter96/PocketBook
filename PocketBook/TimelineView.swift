@@ -15,6 +15,7 @@ struct TimelineView: View {
     var newNoteToken = 0
     var widgetNoteKey = ""
     var widgetOpenToken = 0
+    var onOpenList: (PersistentIdentifier) -> Void = { _ in }
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(RecentDelete.self) private var recentDelete
@@ -56,12 +57,10 @@ struct TimelineView: View {
     @State private var editorNoteID: PersistentIdentifier?
     @State private var isSelecting = false
     @State private var selectedNoteIDs: Set<PersistentIdentifier> = []
-    @AppStorage("pocketbook.appearance") private var appearanceRaw = ""
-    @AppStorage("pocketbook.colorway") private var colorwayRaw = ""
+    @Environment(PocketSettings.self) private var settings
     @State private var showsReadingSettings = false
     @State private var handledNewNoteToken = 0
     @State private var handledWidgetOpen = 0
-    @Environment(\.colorScheme) private var colorScheme
 
     private var isEditing: Bool { editor.editingID != nil }
     private var canUseRail: Bool {
@@ -184,6 +183,9 @@ struct TimelineView: View {
         .sensoryFeedback(.selection, trigger: hapticNoteIndex)
         .sensoryFeedback(.impact(weight: .heavy), trigger: railImpactToken)
         .tint(.primary)
+        .environment(\.colorScheme, settings.colorway.scheme)
+        .environment(\.pocketReading, settings.reading)
+        .preferredColorScheme(settings.colorway.scheme)
         .sheet(isPresented: $showsReadingSettings) {
             ReadingSettingsSheet()
         }
@@ -243,7 +245,7 @@ struct TimelineView: View {
                     Button(action: deleteSelected) {
                         Image(systemName: "trash")
                             .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(selectedNoteIDs.isEmpty ? Color.black.opacity(0.25) : Color.black)
+                            .foregroundStyle(selectedNoteIDs.isEmpty ? Color.primary.opacity(0.25) : Color.primary)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
@@ -272,14 +274,14 @@ struct TimelineView: View {
                     .accessibilityLabel("Reading Settings")
 
                     Button(action: toggleAppearance) {
-                        Image(systemName: colorScheme == .light ? "sun.max" : "sun.max.fill")
+                        Image(systemName: settings.colorway == .light ? "sun.max" : "sun.max.fill")
                             .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(colorScheme == .light ? Color.primary.opacity(0.35) : Color.primary)
+                            .foregroundStyle(settings.colorway == .light ? Color.primary.opacity(0.35) : Color.primary)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(colorScheme == .light ? "Switch to Dark Mode" : "Switch to Light Mode")
+                    .accessibilityLabel(settings.colorway == .light ? "Switch to Dark Mode" : "Switch to Light Mode")
 
                     Menu {
                         Button("New Note", systemImage: "plus") {
@@ -308,17 +310,15 @@ struct TimelineView: View {
     }
 
     private func toggleAppearance() {
-        let next = colorScheme == .light ? "dark" : "light"
-        appearanceRaw = next
-        colorwayRaw = next
+        settings.toggleAppearance()
     }
 
     private var stickyHeader: some View {
         streamMasthead
             .padding(.top, topInset + 62)
-            .padding(.leading, 20)
-            .padding(.trailing, 16)
-            .padding(.bottom, 8)
+            .padding(.leading, 20 * settings.reading.padScale)
+            .padding(.trailing, 16 * settings.reading.padScale)
+            .padding(.bottom, 8 * settings.reading.padScale)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PocketCanvas())
             .offset(y: streamHeaderSlide)
@@ -330,9 +330,9 @@ struct TimelineView: View {
         ZStack {
             Image(systemName: "plus")
                 .font(.title3.weight(.medium))
-                .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
+                .foregroundStyle(settings.colorway == .dark ? Color.black : Color.white)
                 .frame(width: 56, height: 56)
-                .modifier(ComposeGlass())
+                .modifier(ComposeGlass(tint: settings.colorway == .dark ? .white : .black))
                 .allowsHitTesting(false)
 
             ComposeHitButton(action: startNewNote)
@@ -394,6 +394,7 @@ struct TimelineView: View {
                             editor.end()
                             editorNoteID = note.persistentModelID
                         },
+                        onOpenList: onOpenList,
                         composeFrame: composeFrame,
                         onCompose: startNewNote
                     )
@@ -418,10 +419,10 @@ struct TimelineView: View {
                         }
                     }
                     .listRowInsets(EdgeInsets(
-                        top: 2,
-                        leading: 28,
-                        bottom: 2,
-                        trailing: 36
+                        top: 2 * settings.reading.padScale,
+                        leading: 28 * settings.reading.padScale,
+                        bottom: 2 * settings.reading.padScale,
+                        trailing: 36 * settings.reading.padScale
                     ))
                     .listRowSeparator(.hidden)
                     .listRowBackground(PocketCanvas())
@@ -980,16 +981,13 @@ private struct ComposeHitButton: UIViewRepresentable {
 }
 
 private struct ComposeGlass: ViewModifier {
-    @Environment(\.colorScheme) private var colorScheme
+    var tint: Color
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(
-                .regular.tint(colorScheme == .dark ? Color.white : Color.black),
-                in: Circle()
-            )
+            content.glassEffect(.regular.tint(tint.opacity(0.62)), in: Circle())
         } else {
-            content.background(colorScheme == .dark ? Color.white : Color.black, in: Circle())
+            content.background(tint.opacity(0.88), in: Circle())
         }
     }
 }
@@ -1009,9 +1007,11 @@ private struct NoteRow: View {
     var onDeleteImage: (String) -> Void
     var onFinishPhotoEdit: () -> Void
     var onOpenEditor: () -> Void
+    var onOpenList: (PersistentIdentifier) -> Void = { _ in }
     var composeFrame: CGRect = .zero
     var onCompose: () -> Void = {}
     @Environment(VoiceMemoController.self) private var voice
+    @Environment(PocketSettings.self) private var settings
     @State private var editorHeight: CGFloat = 22
     @State private var hitFrames = NoteHitFrames()
     @State private var transcriptOpen = false
@@ -1019,45 +1019,16 @@ private struct NoteRow: View {
     @State private var scrollToken = 0
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 12 * settings.reading.padScale) {
             if isSelecting {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22))
-                    .foregroundStyle(isSelected ? Color.black : Color.black.opacity(0.28))
+                    .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.28))
                     .padding(.top, 1)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 2) {
-                Text(streamStamp)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if !isSelecting {
-                    Group {
-                        if isEditing {
-                            Button(action: onOpenEditor) {
-                                editorArrow
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            editorArrow
-                                .background {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: NoteHitPreference.self,
-                                            value: NoteHitFrames(editor: geometry.frame(in: .global))
-                                        )
-                                    }
-                                }
-                        }
-                    }
-                }
-            }
-            if let listTitle {
-                Text(listTitle)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
+            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: stackGap) {
             if isEditing {
                 NoteTextView(note: note, editor: editor, onHeight: { height in
                     if abs(editorHeight - height) > 0.5 {
@@ -1068,7 +1039,7 @@ private struct NoteRow: View {
             } else {
                 Text(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add note..." : note.text)
                     .pocketBody()
-                    .foregroundStyle(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(.darkGray) : .primary)
+                    .foregroundStyle(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : .primary)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
             }
@@ -1100,8 +1071,18 @@ private struct NoteRow: View {
                 onOpen: onOpenImage
             )
             }
+            if namedLists.isEmpty {
+                stampRow
+                    .padding(.top, stackGap)
+            } else {
+                listNames
+                    .padding(.top, noteToList)
+                stampRow
+                    .padding(.top, listToDate)
+            }
+            }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 10 * settings.reading.padScale)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay {
             if !isEditing {
@@ -1133,10 +1114,10 @@ private struct NoteRow: View {
     }
 
     private var editorArrow: some View {
-        Image(systemName: "arrow.up.right")
-            .font(.system(size: 15, weight: .semibold))
+        Text("↗")
+            .font(PocketGeist.font(size: settings.reading.metaPointSize))
             .foregroundStyle(.primary)
-            .frame(width: 32, height: 32)
+            .frame(width: max(32, settings.reading.metaPointSize + 14), height: max(32, settings.reading.metaPointSize + 14))
             .contentShape(Rectangle())
             .accessibilityLabel("Edit note")
     }
@@ -1153,10 +1134,69 @@ private struct NoteRow: View {
         return "\(day) · \(time)"
     }
 
-    private var listTitle: String? {
-        let names = note.lists.map(\.name).filter { !$0.isEmpty }
-        guard !names.isEmpty else { return nil }
-        return names.joined(separator: ", ")
+    private var stackGap: CGFloat { 8 * settings.reading.padScale }
+    private var noteToList: CGFloat { stackGap * 0.9 }
+    private var listToDate: CGFloat { stackGap * 0.8 }
+
+    private var namedLists: [Board] {
+        note.lists.filter { !$0.name.isEmpty }
+    }
+
+    private var stampRow: some View {
+        HStack(spacing: 2) {
+            Text(streamStamp)
+                .font(PocketGeist.font(size: settings.reading.metaPointSize))
+                .foregroundStyle(.secondary)
+            if !isSelecting {
+                Group {
+                    if isEditing {
+                        Button(action: onOpenEditor) {
+                            editorArrow
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        editorArrow
+                            .background {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: NoteHitPreference.self,
+                                        value: NoteHitFrames(editor: geometry.frame(in: .global))
+                                    )
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    private var listNames: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(namedLists.enumerated()), id: \.element.persistentModelID) { index, board in
+                if index > 0 {
+                    Text(", ")
+                        .font(settings.reading.metaFont())
+                        .foregroundStyle(.tertiary)
+                }
+                Button {
+                    onOpenList(board.persistentModelID)
+                } label: {
+                    Text(board.name)
+                        .font(settings.reading.metaFont())
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open \(board.name)")
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: NoteHitPreference.self,
+                            value: NoteHitFrames(lists: [String(describing: board.persistentModelID): geometry.frame(in: .global)])
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private func handleCardTap(_ point: CGPoint) {
@@ -1166,6 +1206,11 @@ private struct NoteRow: View {
         }
         if isSelecting {
             onTap()
+            return
+        }
+        if let listID = hitFrames.lists.first(where: { $0.value.insetBy(dx: -8, dy: -8).contains(point) })?.key,
+           let board = namedLists.first(where: { String(describing: $0.persistentModelID) == listID }) {
+            onOpenList(board.persistentModelID)
             return
         }
         if hitFrames.editor.insetBy(dx: -8, dy: -8).contains(point) {
