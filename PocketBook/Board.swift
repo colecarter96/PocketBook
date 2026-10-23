@@ -10,10 +10,12 @@ import SwiftData
 
 @Model
 final class Board {
-    var name: String
-    var createdAt: Date
+    var name: String = ""
+    var createdAt: Date = Date()
     @Relationship(deleteRule: .nullify, inverse: \Note.boards)
-    var notes: [Note]
+    var notes: [Note]? = []
+
+    var listedNotes: [Note] { notes ?? [] }
 
     init(name: String, createdAt: Date = .now) {
         self.name = name

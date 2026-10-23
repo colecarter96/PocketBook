@@ -12,9 +12,13 @@ import UIKit
 
 struct TimelineView: View {
     var scrollToTopToken = 0
+    var newNoteToken = 0
+    var widgetNoteKey = ""
+    var widgetOpenToken = 0
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(RecentDelete.self) private var recentDelete
+    @Environment(RecentFiling.self) private var recentFiling
     @Environment(VoiceMemoController.self) private var voiceMemos
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
 
@@ -44,12 +48,19 @@ struct TimelineView: View {
     @State private var previewImageName: String?
     @State private var editingPhotosNoteID: PersistentIdentifier?
     @State private var headerHidden: CGFloat = 0
-    @State private var statusBarHeight: CGFloat = 54
+    @State private var topInset: CGFloat = StreamHeader.resolvedTopInset()
     @State private var headerTopToken = 0
     @State private var composeTopToken = 0
+    @State private var composeFrame: CGRect = .zero
+    @State private var composeTapLock = false
+    @State private var editorNoteID: PersistentIdentifier?
     @State private var isSelecting = false
     @State private var selectedNoteIDs: Set<PersistentIdentifier> = []
     @AppStorage("pocketbook.appearance") private var appearanceRaw = ""
+    @AppStorage("pocketbook.colorway") private var colorwayRaw = ""
+    @State private var showsReadingSettings = false
+    @State private var handledNewNoteToken = 0
+    @State private var handledWidgetOpen = 0
     @Environment(\.colorScheme) private var colorScheme
 
     private var isEditing: Bool { editor.editingID != nil }
@@ -67,13 +78,9 @@ struct TimelineView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .background {
-                GeometryReader { geometry in
-                    Color.clear
-                        .onAppear { statusBarHeight = resolvedStatusBarHeight(geometry.safeAreaInsets.top) }
-                        .onChange(of: geometry.safeAreaInsets.top) { _, inset in
-                            statusBarHeight = resolvedStatusBarHeight(inset)
-                        }
+            .navigationDestination(item: $editorNoteID) { id in
+                if let note = notes.first(where: { $0.persistentModelID == id }) {
+                    NoteDetailView(note: note)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -89,12 +96,39 @@ struct TimelineView: View {
                         .accessibilityLabel("Undo Delete")
                     }
 
+                    if recentFiling.canUndo {
+                        Button {
+                            recentFiling.undo(in: modelContext)
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.title3.weight(.medium))
+                                .foregroundStyle(Color.gray.opacity(0.55))
+                        }
+                        .accessibilityLabel("Undo File")
+                    }
+
                     if !isEditing && !isSelecting {
                         composeButton
+                            .background {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: ComposeFramePreference.self,
+                                        value: geometry.frame(in: .global)
+                                    )
+                                }
+                            }
                     }
                 }
                 .padding(.trailing, 30)
                 .padding(.bottom, PocketBarClearance.control)
+            }
+            .background {
+                if isEditing || isSelecting {
+                    Color.clear.preference(key: ComposeFramePreference.self, value: .zero)
+                }
+            }
+            .onPreferenceChange(ComposeFramePreference.self) { frame in
+                composeFrame = frame
             }
             .scrollDismissesKeyboard(.never)
             .photosPicker(
@@ -150,6 +184,22 @@ struct TimelineView: View {
         .sensoryFeedback(.selection, trigger: hapticNoteIndex)
         .sensoryFeedback(.impact(weight: .heavy), trigger: railImpactToken)
         .tint(.primary)
+        .sheet(isPresented: $showsReadingSettings) {
+            ReadingSettingsSheet()
+        }
+        .onAppear {
+            beginNote(from: newNoteToken)
+            openWidgetNote()
+        }
+        .onChange(of: newNoteToken) { _, token in
+            beginNote(from: token)
+        }
+        .onChange(of: widgetOpenToken) { _, _ in
+            openWidgetNote()
+        }
+        .onChange(of: notes.count) { _, _ in
+            openWidgetNote()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 persist()
@@ -167,23 +217,27 @@ struct TimelineView: View {
         -headerHidden
     }
 
+    private var headerPanelHeight: CGFloat {
+        topInset + StreamHeader.height
+    }
+
     private var streamHeaderReach: CGFloat {
-        statusBarHeight + StreamHeader.height
+        headerPanelHeight
     }
 
     private var streamMasthead: some View {
         HStack(alignment: .top, spacing: 12) {
             Button(action: requestHeaderTop) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Stream")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(.primary)
-                    
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                Image("PocketBookWordmark")
+                    .renderingMode(.original)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 30, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("PocketBook")
 
             if isSelecting {
                     Button(action: deleteSelected) {
@@ -205,6 +259,18 @@ struct TimelineView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
+                    Button {
+                        showsReadingSettings = true
+                    } label: {
+                        Text("Aa")
+                            .font(.system(size: 18, weight: .semibold, design: .serif))
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Reading Settings")
+
                     Button(action: toggleAppearance) {
                         Image(systemName: colorScheme == .light ? "sun.max" : "sun.max.fill")
                             .font(.system(size: 18, weight: .medium))
@@ -223,8 +289,9 @@ struct TimelineView: View {
                             beginSelecting()
                         }
                     } label: {
-                        Text("---")
+                        Text("...")
                             .font(.custom("HelveticaNeue-Medium", size: 18))
+                            .baselineOffset(3)
                             .foregroundStyle(.primary)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
@@ -241,34 +308,47 @@ struct TimelineView: View {
     }
 
     private func toggleAppearance() {
-        appearanceRaw = colorScheme == .light ? "dark" : "light"
+        let next = colorScheme == .light ? "dark" : "light"
+        appearanceRaw = next
+        colorwayRaw = next
     }
 
-    private func resolvedStatusBarHeight(_ inset: CGFloat) -> CGFloat {
-        if inset > 1 { return inset }
-        let bar = UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.statusBarManager?.statusBarFrame.height }
-            .first ?? 54
-        return bar > 1 ? bar : 54
+    private var stickyHeader: some View {
+        streamMasthead
+            .padding(.top, topInset + 62)
+            .padding(.leading, 20)
+            .padding(.trailing, 16)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PocketCanvas())
+            .offset(y: streamHeaderSlide)
+            .animation(nil, value: headerHidden)
+            .allowsHitTesting(headerHidden < headerPanelHeight - 1)
     }
 
     private var composeButton: some View {
-        Button(action: startNewNote) {
+        ZStack {
             Image(systemName: "plus")
                 .font(.title3.weight(.medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
                 .frame(width: 56, height: 56)
-                .background(.black, in: Circle())
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+                .modifier(ComposeGlass())
+                .allowsHitTesting(false)
+
+            ComposeHitButton(action: startNewNote)
+                .frame(width: 56, height: 56)
         }
+        .frame(width: 56, height: 56)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("New Note")
+        .accessibilityAddTraits(.isButton)
     }
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 0) {
             streamMasthead
             Text("Nothing captured yet")
-                .font(.body)
+                .pocketBody()
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -277,11 +357,12 @@ struct TimelineView: View {
     private var timeline: some View {
         ScrollViewReader { proxy in
             List {
-                streamMasthead
-                .id(TimelineAnchor.top)
-                .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 16))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
+                Color.clear
+                    .frame(height: StreamHeader.height)
+                    .id(TimelineAnchor.top)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 ForEach(notes) { note in
                     NoteRow(
                         note: note,
@@ -308,7 +389,13 @@ struct TimelineView: View {
                         onOpenImage: { previewImageName = $0 },
                         isArrangingPhotos: editingPhotosNoteID == note.persistentModelID,
                         onDeleteImage: { removeImage($0, from: note) },
-                        onFinishPhotoEdit: { editingPhotosNoteID = nil }
+                        onFinishPhotoEdit: { editingPhotosNoteID = nil },
+                        onOpenEditor: {
+                            editor.end()
+                            editorNoteID = note.persistentModelID
+                        },
+                        composeFrame: composeFrame,
+                        onCompose: startNewNote
                     )
                     .id(note.persistentModelID)
                     .scaleEffect(radialNoteID == note.persistentModelID ? pressedScale : 1)
@@ -337,7 +424,7 @@ struct TimelineView: View {
                         trailing: 36
                     ))
                     .listRowSeparator(.hidden)
-                    .listRowBackground(Color(.systemBackground))
+                    .listRowBackground(PocketCanvas())
                 }
 
                 Color.clear
@@ -349,7 +436,12 @@ struct TimelineView: View {
             .listStyle(.plain)
             .scrollIndicators(.hidden)
             .scrollContentBackground(.hidden)
-            .background(Color(.systemBackground))
+            .contentMargins(.top, 0, for: .scrollContent)
+            .background {
+                PocketCanvas()
+                    .ignoresSafeArea(edges: .top)
+            }
+            .ignoresSafeArea(edges: .top)
             .onScrollGeometryChange(for: TimelineScrollState.self) { geometry in
                 TimelineScrollState(geometry: geometry)
             } action: { oldState, newState in
@@ -362,6 +454,11 @@ struct TimelineView: View {
                 guard !isDraggingRail else { return }
                 railProgress = newState.progress
                 registerPassedNote(at: newState.progress)
+            }
+            .overlay(alignment: .top) {
+                stickyHeader
+                    .offset(y: -topInset)
+                    .ignoresSafeArea(edges: .top)
             }
             .overlay(alignment: .trailing) {
                 if canUseRail {
@@ -417,13 +514,19 @@ struct TimelineView: View {
             }
             .background {
                 GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: MenuBoundsPreference.self,
-                        value: geometry.frame(in: .global)
-                    )
+                    Color.clear
+                        .preference(
+                            key: MenuBoundsPreference.self,
+                            value: geometry.frame(in: .global)
+                        )
+                        .preference(
+                            key: TopInsetPreference.self,
+                            value: geometry.safeAreaInsets.top
+                        )
                 }
             }
             .onPreferenceChange(MenuBoundsPreference.self) { menuBounds = $0 }
+            .onPreferenceChange(TopInsetPreference.self) { topInset = $0 }
             .onPreferenceChange(NoteFramePreference.self) { frames in
                 noteFrames = frames
                 if let radialNoteID, let frame = frames[radialNoteID] {
@@ -441,6 +544,9 @@ struct TimelineView: View {
         at point: CGPoint,
         noteID: PersistentIdentifier
     ) -> Bool {
+        if composeFrame.width > 1, composeFrame.insetBy(dx: -4, dy: -4).contains(point) {
+            return false
+        }
         switch state {
         case .began:
             guard !isEditing, !isSelecting else { return false }
@@ -657,7 +763,24 @@ struct TimelineView: View {
         hapticNoteIndex = index
     }
 
+    private func openWidgetNote() {
+        guard widgetOpenToken > handledWidgetOpen, !widgetNoteKey.isEmpty else { return }
+        guard let note = notes.first(where: { $0.widgetKey == widgetNoteKey }) else { return }
+        handledWidgetOpen = widgetOpenToken
+        editor.end()
+        editorNoteID = note.persistentModelID
+    }
+
+    private func beginNote(from token: Int) {
+        guard token > handledNewNoteToken else { return }
+        handledNewNoteToken = token
+        startNewNote()
+    }
+
     private func startNewNote() {
+        if composeTapLock { return }
+        composeTapLock = true
+        DispatchQueue.main.async { composeTapLock = false }
         let note = Note(text: "")
         modelContext.insert(note)
         persist()
@@ -743,6 +866,14 @@ struct TimelineView: View {
     }
 }
 
+private struct TopInsetPreference: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct MenuBoundsPreference: PreferenceKey {
     static var defaultValue: CGRect = .zero
 
@@ -791,6 +922,78 @@ private struct NoteDimOverlay: View {
     }
 }
 
+private struct ComposeFramePreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next.width > 1, next.height > 1 {
+            value = next
+        }
+    }
+}
+
+private struct ComposeHitButton: UIViewRepresentable {
+    var action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> CircleButton {
+        let button = CircleButton(type: .custom)
+        button.backgroundColor = .clear
+        button.isAccessibilityElement = false
+        button.addTarget(context.coordinator, action: #selector(Coordinator.tap), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: CircleButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: CircleButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 56, height: proposal.height ?? 56)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tap() {
+            action()
+        }
+    }
+
+    final class CircleButton: UIButton {
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            let radius = min(bounds.width, bounds.height) / 2
+            let dx = point.x - center.x
+            let dy = point.y - center.y
+            return dx * dx + dy * dy <= radius * radius
+        }
+    }
+}
+
+private struct ComposeGlass: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(
+                .regular.tint(colorScheme == .dark ? Color.white : Color.black),
+                in: Circle()
+            )
+        } else {
+            content.background(colorScheme == .dark ? Color.white : Color.black, in: Circle())
+        }
+    }
+}
+
 private struct NoteRow: View {
     @Bindable var note: Note
     var isEditing: Bool
@@ -805,11 +1008,15 @@ private struct NoteRow: View {
     var isArrangingPhotos: Bool
     var onDeleteImage: (String) -> Void
     var onFinishPhotoEdit: () -> Void
+    var onOpenEditor: () -> Void
+    var composeFrame: CGRect = .zero
+    var onCompose: () -> Void = {}
     @Environment(VoiceMemoController.self) private var voice
     @State private var editorHeight: CGFloat = 22
     @State private var hitFrames = NoteHitFrames()
     @State private var transcriptOpen = false
     @State private var transcriptEditing = false
+    @State private var scrollToken = 0
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -821,6 +1028,36 @@ private struct NoteRow: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 2) {
+                Text(streamStamp)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if !isSelecting {
+                    Group {
+                        if isEditing {
+                            Button(action: onOpenEditor) {
+                                editorArrow
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            editorArrow
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: NoteHitPreference.self,
+                                            value: NoteHitFrames(editor: geometry.frame(in: .global))
+                                        )
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+            if let listTitle {
+                Text(listTitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
             if isEditing {
                 NoteTextView(note: note, editor: editor, onHeight: { height in
                     if abs(editorHeight - height) > 0.5 {
@@ -829,15 +1066,10 @@ private struct NoteRow: View {
                 }, onLibrary: onLibrary, onCamera: onCamera)
                 .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
             } else {
-                Text(streamStamp)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
                 Text(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Add note..." : note.text)
-                    .font(.body)
+                    .pocketBody()
                     .foregroundStyle(note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(.darkGray) : .primary)
                     .multilineTextAlignment(.leading)
-                    .lineLimit(note.audioFileName == nil ? 6 : 4)
                     .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
             }
 
@@ -850,8 +1082,17 @@ private struct NoteRow: View {
                         )
                     }
                 }
-            if note.audioFileName != nil {
-                MemoTranscript(note: note, isOpen: $transcriptOpen, isEditing: $transcriptEditing)
+            if note.audioFileName != nil || voice.recordingNoteID == note.persistentModelID {
+                MemoTranscript(
+                    note: note,
+                    isOpen: $transcriptOpen,
+                    isEditing: $transcriptEditing,
+                    editor: editor,
+                    onLibrary: onLibrary,
+                    onCamera: onCamera
+                )
+                KeepTranscriptVisible(token: scrollToken)
+                    .frame(height: 1)
             }
             NoteImageStrip(
                 fileNames: note.imageFileNames,
@@ -878,6 +1119,26 @@ private struct NoteRow: View {
                 transcriptEditing = false
             }
         }
+        .onChange(of: voice.recordingNoteID) { _, id in
+            guard id == note.persistentModelID else { return }
+            transcriptOpen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                scrollToken += 1
+            }
+        }
+        .onChange(of: note.transcript) { old, new in
+            guard old.isEmpty, !new.isEmpty else { return }
+            scrollToken += 1
+        }
+    }
+
+    private var editorArrow: some View {
+        Image(systemName: "arrow.up.right")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+            .accessibilityLabel("Edit note")
     }
 
     private var streamStamp: String {
@@ -892,9 +1153,23 @@ private struct NoteRow: View {
         return "\(day) · \(time)"
     }
 
+    private var listTitle: String? {
+        let names = note.lists.map(\.name).filter { !$0.isEmpty }
+        guard !names.isEmpty else { return nil }
+        return names.joined(separator: ", ")
+    }
+
     private func handleCardTap(_ point: CGPoint) {
+        if composeFrame.width > 1, composeFrame.insetBy(dx: -4, dy: -4).contains(point) {
+            onCompose()
+            return
+        }
         if isSelecting {
             onTap()
+            return
+        }
+        if hitFrames.editor.insetBy(dx: -8, dy: -8).contains(point) {
+            onOpenEditor()
             return
         }
         if isArrangingPhotos, hitFrames.check.insetBy(dx: -8, dy: -8).contains(point) {
@@ -932,9 +1207,48 @@ private struct NoteRow: View {
     }
 }
 
+private struct KeepTranscriptVisible: UIViewRepresentable {
+    var token: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard context.coordinator.token != token else { return }
+        context.coordinator.token = token
+        DispatchQueue.main.async {
+            guard let scrollView = uiView.enclosingScrollView() else { return }
+            let rect = uiView.convert(uiView.bounds, to: scrollView)
+            let visibleBottom = scrollView.contentOffset.y
+                + scrollView.bounds.height
+                - scrollView.adjustedContentInset.bottom
+                - 16
+            let overflow = rect.maxY - visibleBottom
+            guard overflow > 8 else { return }
+            let minY = -scrollView.adjustedContentInset.top
+            let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
+            let y = min(max(scrollView.contentOffset.y + overflow, minY), maxY)
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: y), animated: true)
+        }
+    }
+
+    final class Coordinator {
+        var token = 0
+    }
+}
+
 private struct EditingOutsideTap: UIViewRepresentable {
     var editingID: PersistentIdentifier?
     var noteFrame: CGRect
+    var chromeFrame: CGRect = .zero
     var onOutside: (PersistentIdentifier) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -953,6 +1267,7 @@ private struct EditingOutsideTap: UIViewRepresentable {
     func updateUIView(_ uiView: HostView, context: Context) {
         context.coordinator.editingID = editingID
         context.coordinator.noteFrame = noteFrame
+        context.coordinator.chromeFrame = chromeFrame
         context.coordinator.onOutside = onOutside
         context.coordinator.attach(from: uiView)
     }
@@ -973,6 +1288,7 @@ private struct EditingOutsideTap: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var editingID: PersistentIdentifier?
         var noteFrame: CGRect = .zero
+        var chromeFrame: CGRect = .zero
         var onOutside: (PersistentIdentifier) -> Void
         private var armedID: PersistentIdentifier?
         private weak var window: UIWindow?
@@ -1010,6 +1326,7 @@ private struct EditingOutsideTap: UIViewRepresentable {
             guard let editingID, noteFrame.width > 1, noteFrame.height > 1 else { return false }
             if touchesEditingChrome(touch) { return false }
             let point = touch.location(in: nil)
+            if chromeFrame.width > 1, chromeFrame.insetBy(dx: -8, dy: -8).contains(point) { return false }
             if noteFrame.insetBy(dx: -8, dy: -6).contains(point) { return false }
             armedID = editingID
             return true
@@ -1025,7 +1342,9 @@ private struct EditingOutsideTap: UIViewRepresentable {
         private func touchesEditingChrome(_ touch: UITouch) -> Bool {
             var view = touch.view
             while let current = view {
-                if current is UITextView || current is UIToolbar { return true }
+                if current is UITextView || current is UIToolbar || current is UIControl || current is NoteKeyboardAccessory {
+                    return true
+                }
                 view = current.superview
             }
             return false
@@ -1039,7 +1358,17 @@ private struct EditingOutsideTap: UIViewRepresentable {
 }
 
 private enum StreamHeader {
-    static let height: CGFloat = 48
+    /// Gap above the controls, the control row, and the gap before the first note.
+    static let height: CGFloat = 122
+
+    static func resolvedTopInset() -> CGFloat {
+        let inset = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .safeAreaInsets.top ?? 0
+        return inset > 1 ? inset : 59
+    }
 }
 
 private enum TimelineAnchor: Hashable {
@@ -1080,6 +1409,7 @@ private struct TimelineScrollState: Equatable {
     return TimelineView()
         .modelContainer(container)
         .environment(RecentDelete())
+        .environment(RecentFiling())
         .environment(VoiceMemoController())
 }
 
@@ -1108,5 +1438,6 @@ private struct TimelineScrollState: Equatable {
     return TimelineView()
         .modelContainer(container)
         .environment(RecentDelete())
+        .environment(RecentFiling())
         .environment(VoiceMemoController())
 }

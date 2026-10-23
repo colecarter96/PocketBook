@@ -25,14 +25,11 @@ private struct PickedNoteImage: Transferable {
 
 enum NoteImageStore {
     static var directory: URL {
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("NoteImages", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
+        PocketCloudStore.directory(folder: "NoteImages")
     }
 
     static func fileURL(_ fileName: String) -> URL {
-        directory.appendingPathComponent(fileName)
+        PocketCloudStore.fileURL(fileName, folder: "NoteImages")
     }
 
     static func delete(_ fileName: String?) {
@@ -115,6 +112,7 @@ enum NoteImageStore {
 }
 
 struct NoteHitFrames: Equatable {
+    var editor: CGRect = .zero
     var memo: CGRect = .zero
     var transcriptToggle: CGRect = .zero
     var transcriptField: CGRect = .zero
@@ -127,6 +125,9 @@ struct NoteHitPreference: PreferenceKey {
 
     static func reduce(value: inout NoteHitFrames, nextValue: () -> NoteHitFrames) {
         let next = nextValue()
+        if next.editor != .zero {
+            value.editor = next.editor
+        }
         if next.memo != .zero {
             value.memo = next.memo
         }
@@ -173,7 +174,7 @@ struct NoteImageStrip: View {
 
     private var keepPhotosMark: some View {
         let mark = Image(systemName: "checkmark")
-            .font(.body.weight(.bold))
+            .pocketBody(weight: .bold)
             .foregroundStyle(.black)
             .frame(width: 36, height: 36)
             .background(Circle().fill(.white))

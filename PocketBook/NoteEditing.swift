@@ -167,6 +167,207 @@ final class TimelineEditor {
     }
 }
 
+final class NoteKeyboardAccessory: UIView {
+    var onLibrary: () -> Void = {}
+    var onCamera: () -> Void = {}
+    var onMic: () -> Void = {}
+    var onSave: () -> Void = {}
+
+    private let photo = UIButton(type: .system)
+    private let mic = UIButton(type: .system)
+    private let check = CheckPillButton()
+    private let glass: UIVisualEffectView?
+    private let fallback = UIView()
+
+    override init(frame: CGRect) {
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            glass = UIVisualEffectView(effect: effect)
+        } else {
+            glass = nil
+        }
+        super.init(frame: CGRect(x: 0, y: 0, width: 320, height: 62))
+        autoresizingMask = .flexibleWidth
+        backgroundColor = .clear
+
+        fallback.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
+        fallback.isUserInteractionEnabled = false
+        if let glass {
+            glass.isUserInteractionEnabled = false
+            glass.clipsToBounds = true
+            addSubview(glass)
+        } else {
+            addSubview(fallback)
+        }
+
+        photo.tintColor = .label
+        photo.setImage(UIImage(systemName: "photo"), for: .normal)
+        photo.showsMenuAsPrimaryAction = true
+        photo.accessibilityLabel = "Photo"
+        addSubview(photo)
+
+        mic.tintColor = .label
+        mic.setImage(UIImage(systemName: "mic"), for: .normal)
+        mic.accessibilityLabel = "Add Memo"
+        mic.addTarget(self, action: #selector(micTapped), for: .touchUpInside)
+        addSubview(mic)
+
+        check.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
+        addSubview(check)
+        refreshPhotoMenu()
+        syncMic(isRecording: false, canRecord: true)
+        setDiscarding(false)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: 62)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if let width = window?.bounds.width, width > 1 {
+            frame.size.width = width
+        }
+        frame.size.height = 62
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let bar = bounds.insetBy(dx: 12, dy: 8)
+        let plate = glass ?? fallback
+        plate.frame = bar
+        plate.layer.cornerRadius = bar.height / 2
+
+        let side = bar.height
+        photo.frame = CGRect(x: bar.minX + 6, y: bar.minY, width: side, height: side)
+        mic.frame = CGRect(x: photo.frame.maxX, y: bar.minY, width: side, height: side)
+        let pill = CGRect(x: bar.maxX - 6 - 68, y: bar.midY - 17, width: 68, height: 34)
+        check.frame = pill
+    }
+
+    func setDiscarding(_ discarding: Bool) {
+        check.setDiscarding(discarding)
+    }
+
+    func syncMic(isRecording: Bool, canRecord: Bool) {
+        mic.isHidden = !canRecord && !isRecording
+        if isRecording {
+            mic.menu = nil
+            mic.showsMenuAsPrimaryAction = false
+            mic.setImage(UIImage(systemName: "stop.fill"), for: .normal)
+            mic.tintColor = .systemRed
+            mic.accessibilityLabel = "Stop Recording"
+        } else {
+            mic.tintColor = .label
+            mic.setImage(UIImage(systemName: "mic"), for: .normal)
+            mic.accessibilityLabel = "Add Memo"
+            mic.menu = UIMenu(children: [
+                UIAction(title: "Add Memo", image: UIImage(systemName: "mic")) { [weak self] _ in
+                    self?.onMic()
+                }
+            ])
+            mic.showsMenuAsPrimaryAction = true
+        }
+    }
+
+    private func refreshPhotoMenu() {
+        var actions = [
+            UIAction(title: "Photo Library", image: UIImage(systemName: "photo.on.rectangle")) { [weak self] _ in
+                self?.onLibrary()
+            }
+        ]
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            actions.append(
+                UIAction(title: "Take Photo", image: UIImage(systemName: "camera")) { [weak self] _ in
+                    self?.onCamera()
+                }
+            )
+        }
+        photo.menu = UIMenu(children: actions)
+    }
+
+    @objc private func micTapped() {
+        onMic()
+    }
+
+    @objc private func saveTapped() {
+        let haptic = UIImpactFeedbackGenerator(style: .medium)
+        haptic.prepare()
+        haptic.impactOccurred()
+        onSave()
+    }
+}
+
+private final class CheckPillButton: UIControl {
+    private let mark = UIImageView()
+    private let glass: UIVisualEffectView?
+
+    override init(frame: CGRect) {
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.tintColor = .systemBlue
+            glass = UIVisualEffectView(effect: effect)
+        } else {
+            glass = nil
+        }
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityLabel = "Save"
+
+        if let glass {
+            glass.isUserInteractionEnabled = false
+            glass.clipsToBounds = true
+            addSubview(glass)
+        } else {
+            backgroundColor = .systemBlue
+            clipsToBounds = true
+        }
+
+        mark.contentMode = .center
+        mark.isUserInteractionEnabled = false
+        addSubview(mark)
+        setDiscarding(false)
+    }
+
+    func setDiscarding(_ discarding: Bool) {
+        let symbol = discarding ? "xmark" : "checkmark"
+        mark.image = UIImage(systemName: symbol)?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 16, weight: .bold))
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        accessibilityLabel = discarding ? "Discard" : "Save"
+        let tint: UIColor = discarding ? .systemRed : .systemBlue
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.tintColor = tint
+            glass?.effect = effect
+        } else {
+            backgroundColor = tint
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glass?.frame = bounds
+        glass?.layer.cornerRadius = bounds.height / 2
+        if glass == nil {
+            layer.cornerRadius = bounds.height / 2
+        }
+        mark.frame = bounds
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -12, dy: -10).contains(point)
+    }
+}
+
 struct NoteTextView: UIViewRepresentable {
     var note: Note
     var editor: TimelineEditor
@@ -175,6 +376,7 @@ struct NoteTextView: UIViewRepresentable {
     var onLibrary: () -> Void
     var onCamera: () -> Void
     @Environment(VoiceMemoController.self) private var voice
+    @Environment(\.pocketReading) private var reading
 
     func makeCoordinator() -> Coordinator {
         Coordinator(note: note, editor: editor, onHeight: onHeight)
@@ -185,7 +387,7 @@ struct NoteTextView: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.textColor = .label
         textView.tintColor = .label
-        textView.font = Self.serifBody
+        textView.font = reading.bodyUIFont
         textView.isScrollEnabled = fillsSpace
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
@@ -194,7 +396,7 @@ struct NoteTextView: UIViewRepresentable {
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.delegate = context.coordinator
         textView.text = note.text
-        textView.inputAccessoryView = context.coordinator.makeAccessory()
+        textView.inputAccessoryView = context.coordinator.accessory
         context.coordinator.installPlaceholder(on: textView)
         return textView
     }
@@ -206,15 +408,26 @@ struct NoteTextView: UIViewRepresentable {
         context.coordinator.onLibrary = onLibrary
         context.coordinator.onCamera = onCamera
         context.coordinator.voice = voice
+        context.coordinator.allowsDiscard = !fillsSpace
         context.coordinator.textView = textView
         textView.isScrollEnabled = fillsSpace
+        context.coordinator.accessory.onLibrary = onLibrary
+        context.coordinator.accessory.onCamera = onCamera
+        context.coordinator.accessory.onMic = { [weak coordinator = context.coordinator] in
+            coordinator?.toggleRecording()
+        }
+        context.coordinator.accessory.onSave = { [weak coordinator = context.coordinator] in
+            coordinator?.save()
+        }
         context.coordinator.syncMic(
             isRecording: voice.recordingNoteID == note.persistentModelID,
             canRecord: note.audioFileName == nil
         )
+        context.coordinator.syncDiscard()
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.text {
             textView.text = note.text
         }
+        textView.font = reading.bodyUIFont
         context.coordinator.syncPlaceholder(on: textView)
         editor.register(note.persistentModelID, view: textView)
         context.coordinator.publishHeight(of: textView)
@@ -234,8 +447,6 @@ struct NoteTextView: UIViewRepresentable {
         return CGSize(width: width, height: max(22, ceil(height)))
     }
 
-    private static let serifBody: UIFont = UIFont.preferredFont(forTextStyle: .body)
-
     final class Coordinator: NSObject, UITextViewDelegate {
         var note: Note
         var editor: TimelineEditor
@@ -243,8 +454,9 @@ struct NoteTextView: UIViewRepresentable {
         var onLibrary: () -> Void = {}
         var onCamera: () -> Void = {}
         var voice: VoiceMemoController?
+        var allowsDiscard = false
         weak var textView: UITextView?
-        private var micItem: UIBarButtonItem?
+        let accessory = NoteKeyboardAccessory()
         private static let placeholderTag = 91
 
         init(note: Note, editor: TimelineEditor, onHeight: @escaping (CGFloat) -> Void) {
@@ -253,52 +465,24 @@ struct NoteTextView: UIViewRepresentable {
             self.onHeight = onHeight
         }
 
-        func makeAccessory() -> UIToolbar {
-            let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
-            let mic = UIBarButtonItem(
-                image: UIImage(systemName: "mic"),
-                style: .plain,
-                target: self,
-                action: #selector(toggleRecording)
-            )
-            micItem = mic
-            if note.audioFileName != nil {
-                mic.isHidden = true
-            }
-            let photo = UIBarButtonItem(image: UIImage(systemName: "photo"), menu: photoMenu())
-            let gap = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-            gap.width = 8
-            let save = UIBarButtonItem(title: "Save", style: .done, target: self, action: #selector(save))
-            let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            bar.items = [photo, gap, mic, flex, save]
-            return bar
-        }
-
-        private func photoMenu() -> UIMenu {
-            var actions = [
-                UIAction(title: "Photo Library", image: UIImage(systemName: "photo.on.rectangle")) { [weak self] _ in
-                    self?.onLibrary()
-                }
-            ]
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                actions.append(
-                    UIAction(title: "Take Photo", image: UIImage(systemName: "camera")) { [weak self] _ in
-                        self?.onCamera()
-                    }
-                )
-            }
-            return UIMenu(children: actions)
-        }
-
         func syncMic(isRecording: Bool, canRecord: Bool) {
-            micItem?.isHidden = !canRecord && !isRecording
-            micItem?.image = UIImage(systemName: isRecording ? "stop.fill" : "mic")
-            micItem?.tintColor = isRecording ? .systemRed : .label
+            accessory.syncMic(isRecording: isRecording, canRecord: canRecord)
+        }
+
+        func syncDiscard() {
+            let text = textView?.text ?? note.text
+            let recording = voice?.recordingNoteID == note.persistentModelID
+            let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && note.audioFileName == nil
+                && note.imageFileNames.isEmpty
+                && !recording
+            accessory.setDiscarding(allowsDiscard && blank)
         }
 
         @objc func toggleRecording() {
             guard note.audioFileName == nil || voice?.recordingNoteID == note.persistentModelID else { return }
             voice?.toggleRecording(for: note, editor: editor)
+            syncDiscard()
         }
 
         @objc func save() {
@@ -324,7 +508,8 @@ struct NoteTextView: UIViewRepresentable {
         func syncPlaceholder(on textView: UITextView) {
             guard let label = textView.viewWithTag(Self.placeholderTag) as? UILabel else { return }
             label.font = textView.font
-            label.frame = CGRect(x: 0, y: 0, width: max(textView.bounds.width, 1), height: 22)
+            let line = ceil(textView.font?.lineHeight ?? 22)
+            label.frame = CGRect(x: 0, y: 0, width: max(textView.bounds.width, 1), height: line)
             label.isHidden = !(textView.text ?? "").isEmpty
         }
 
@@ -332,6 +517,7 @@ struct NoteTextView: UIViewRepresentable {
             note.text = textView.text ?? ""
             syncPlaceholder(on: textView)
             publishHeight(of: textView)
+            syncDiscard()
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
@@ -463,7 +649,7 @@ struct NoteTouchSurface: UIViewRepresentable {
     }
 }
 
-private extension UIView {
+extension UIView {
     func enclosingScrollView() -> UIScrollView? {
         var current = superview
         while let view = current {

@@ -16,11 +16,7 @@ struct PocketBookApp: App {
     init() {
         _ = ScrollFriction.install
         UIScrollView.appearance().decelerationRate = ScrollFriction.rate
-        do {
-            container = try ModelContainer(for: Note.self, Board.self)
-        } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
-        }
+        container = PocketStore.makeContainer()
     }
 
     var body: some Scene {
@@ -45,17 +41,19 @@ final class RecentDelete {
         var imageFileNames: [String]
         var revisitDone: Bool
         var revisitAfter: Date?
+        var widgetKey: String
 
         init(_ note: Note) {
             text = note.text
             createdAt = note.createdAt
-            boards = note.boards
+            boards = note.lists
             audioFileName = note.audioFileName
             audioDuration = note.audioDuration
             transcript = note.transcript
             imageFileNames = note.imageFileNames
             revisitDone = note.revisitDone
             revisitAfter = note.revisitAfter
+            widgetKey = note.widgetKey
         }
     }
 
@@ -91,9 +89,54 @@ final class RecentDelete {
             note.imageFileNames = snapshot.imageFileNames
             note.revisitDone = snapshot.revisitDone
             note.revisitAfter = snapshot.revisitAfter
+            if !snapshot.widgetKey.isEmpty {
+                note.widgetKey = snapshot.widgetKey
+            }
         }
         try? context.save()
         snapshots = []
+    }
+}
+
+@Observable
+final class RecentFiling {
+    private var noteID: PersistentIdentifier?
+    private var snapshot: RecentDelete.Snapshot?
+
+    var canUndo: Bool { noteID != nil && snapshot != nil }
+
+    func remember(_ note: Note) {
+        noteID = note.persistentModelID
+        snapshot = RecentDelete.Snapshot(note)
+    }
+
+    func undo(in context: ModelContext) {
+        defer {
+            noteID = nil
+            snapshot = nil
+        }
+        guard let noteID, let snapshot,
+              let note = context.model(for: noteID) as? Note else { return }
+        note.boards = snapshot.boards
+        note.revisitDone = snapshot.revisitDone
+        note.revisitAfter = snapshot.revisitAfter
+        try? context.save()
+    }
+}
+
+enum PocketStore {
+    static func makeContainer() -> ModelContainer {
+        let schema = Schema([Note.self, Board.self])
+        let cloud = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+        if let container = try? ModelContainer(for: schema, configurations: cloud) {
+            return container
+        }
+        let local = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
+        do {
+            return try ModelContainer(for: schema, configurations: local)
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
     }
 }
 
@@ -127,20 +170,35 @@ extension EnvironmentValues {
 
 struct RootView: View {
     @State private var recentDelete = RecentDelete()
+    @State private var recentFiling = RecentFiling()
     @State private var voiceMemos = VoiceMemoController()
     @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: PocketTab = .timeline
     @State private var timelineTopToken = 0
+    @State private var newNoteToken = 0
+    @State private var widgetNoteKey = ""
+    @State private var widgetOpenToken = 0
     @State private var searchQuery = ""
     @State private var recentSearches = RecentSearches.load()
     @State private var keyboardOverlap: CGFloat = 0
     @State private var hidesNav = false
     @FocusState private var searchFieldFocused: Bool
     @AppStorage("pocketbook.appearance") private var appearanceRaw = ""
+    @AppStorage("pocketbook.font") private var fontRaw = PocketFontChoice.helvetica.rawValue
+    @AppStorage("pocketbook.textSize") private var textSizeRaw = PocketTextSize.medium.rawValue
+    @AppStorage("pocketbook.colorway") private var colorwayRaw = ""
 
     init() {
         _ = InstantTabSwitch.disable
         _ = PocketTabRetap.install
+    }
+
+    private var reading: PocketReading {
+        PocketReading(
+            font: PocketFontChoice.stored(fontRaw),
+            size: PocketTextSize(rawValue: textSizeRaw) ?? .medium,
+            colorway: PocketColorway.current(colorwayRaw: colorwayRaw, appearanceRaw: appearanceRaw)
+        )
     }
 
     private var navDropsBehindKeyboard: Bool {
@@ -151,7 +209,12 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             TabView(selection: $selectedTab.animation(nil)) {
                 Tab("Timeline", systemImage: "list.bullet", value: PocketTab.timeline) {
-                    TimelineView(scrollToTopToken: timelineTopToken)
+                    TimelineView(
+                        scrollToTopToken: timelineTopToken,
+                        newNoteToken: newNoteToken,
+                        widgetNoteKey: widgetNoteKey,
+                        widgetOpenToken: widgetOpenToken
+                    )
                 }
 
                 Tab("Search", systemImage: "magnifyingglass", value: PocketTab.search) {
@@ -189,9 +252,13 @@ struct RootView: View {
         }
         .environment(\.pocketNavHidden, $hidesNav)
         .environment(recentDelete)
+        .environment(recentFiling)
         .environment(voiceMemos)
-        .preferredColorScheme(PocketAppearance.scheme(for: appearanceRaw))
+        .preferredColorScheme(reading.colorway.scheme)
+        .environment(\.pocketReading, reading)
+        .background(reading.colorway.canvas.ignoresSafeArea())
         .task {
+            await PocketCloudStore.prepare()
             let notes = (try? modelContext.fetch(FetchDescriptor<Note>())) ?? []
             var keptAudio = Set(notes.compactMap(\.audioFileName))
             for pending in recentDelete.snapshots {
@@ -223,6 +290,29 @@ struct RootView: View {
             } else {
                 searchFieldFocused = false
             }
+        }
+        .onOpenURL { url in
+            guard url.scheme == "pocketbook" else { return }
+            searchFieldFocused = false
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                selectedTab = .timeline
+            }
+            if url.host == "new" {
+                newNoteToken += 1
+            } else if url.host == "note" {
+                let key = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                guard !key.isEmpty else { return }
+                widgetNoteKey = key
+                widgetOpenToken += 1
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSManagedObjectContextDidSave)) { _ in
+            WidgetNoteLibrary.publish(from: modelContext)
+        }
+        .task {
+            WidgetNoteLibrary.publish(from: modelContext)
         }
         .onReceive(NotificationCenter.default.publisher(for: .pocketTimelineRetap)) { _ in
             guard selectedTab == .timeline else { return }

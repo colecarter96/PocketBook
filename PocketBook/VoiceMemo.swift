@@ -11,14 +11,11 @@ import UIKit
 
 enum VoiceMemoStore {
     static var directory: URL {
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("VoiceMemos", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
+        PocketCloudStore.directory(folder: "VoiceMemos")
     }
 
     static func fileURL(_ fileName: String) -> URL {
-        directory.appendingPathComponent(fileName)
+        PocketCloudStore.fileURL(fileName, folder: "VoiceMemos")
     }
 
     static func makeFileURL() -> URL {
@@ -373,6 +370,9 @@ struct MemoTranscript: View {
     @Bindable var note: Note
     @Binding var isOpen: Bool
     @Binding var isEditing: Bool
+    var editor: TimelineEditor
+    var onLibrary: () -> Void
+    var onCamera: () -> Void
     @State private var editorHeight: CGFloat = 22
 
     var body: some View {
@@ -409,17 +409,24 @@ struct MemoTranscript: View {
             if isOpen {
                 Group {
                     if isEditing {
-                        TranscriptTextView(note: note, onHeight: { height in
-                            if abs(editorHeight - height) > 0.5 {
-                                editorHeight = height
-                            }
-                        }, onSave: {
-                            isEditing = false
-                        })
+                        TranscriptTextView(
+                            note: note,
+                            editor: editor,
+                            onHeight: { height in
+                                if abs(editorHeight - height) > 0.5 {
+                                    editorHeight = height
+                                }
+                            },
+                            onSave: {
+                                isEditing = false
+                            },
+                            onLibrary: onLibrary,
+                            onCamera: onCamera
+                        )
                         .frame(maxWidth: .infinity, minHeight: editorHeight, alignment: .topLeading)
                     } else {
                         Text(note.transcript.isEmpty ? " " : note.transcript)
-                            .font(.system(.body, design: .serif))
+                            .pocketBody()
                             .foregroundStyle(note.transcript.isEmpty ? .clear : .primary)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, minHeight: 22, alignment: .topLeading)
@@ -444,11 +451,16 @@ struct MemoTranscript: View {
 
 private struct TranscriptTextView: UIViewRepresentable {
     var note: Note
+    var editor: TimelineEditor
     var onHeight: (CGFloat) -> Void
     var onSave: () -> Void
+    var onLibrary: () -> Void
+    var onCamera: () -> Void
+    @Environment(\.pocketReading) private var reading
+    @Environment(VoiceMemoController.self) private var voice
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(note: note, onHeight: onHeight, onSave: onSave)
+        Coordinator(note: note, editor: editor, onHeight: onHeight, onSave: onSave)
     }
 
     func makeUIView(context: Context) -> UITextView {
@@ -456,7 +468,7 @@ private struct TranscriptTextView: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.textColor = .label
         textView.tintColor = .label
-        textView.font = Self.serifBody
+        textView.font = reading.bodyUIFont
         textView.isScrollEnabled = false
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
@@ -465,15 +477,32 @@ private struct TranscriptTextView: UIViewRepresentable {
         textView.setContentHuggingPriority(.required, for: .vertical)
         textView.delegate = context.coordinator
         textView.text = note.transcript
-        textView.inputAccessoryView = context.coordinator.makeAccessory(for: textView)
+        textView.inputAccessoryView = context.coordinator.accessory
         return textView
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.note = note
+        context.coordinator.editor = editor
         context.coordinator.onHeight = onHeight
         context.coordinator.onSave = onSave
+        context.coordinator.onLibrary = onLibrary
+        context.coordinator.onCamera = onCamera
+        context.coordinator.voice = voice
         context.coordinator.textView = textView
+        context.coordinator.accessory.onLibrary = onLibrary
+        context.coordinator.accessory.onCamera = onCamera
+        context.coordinator.accessory.onMic = { [weak coordinator = context.coordinator] in
+            coordinator?.toggleRecording()
+        }
+        context.coordinator.accessory.onSave = { [weak coordinator = context.coordinator] in
+            coordinator?.save()
+        }
+        context.coordinator.accessory.syncMic(
+            isRecording: voice.recordingNoteID == note.persistentModelID,
+            canRecord: note.audioFileName == nil
+        )
+        textView.font = reading.bodyUIFont
         if textView.markedTextRange == nil, !textView.isFirstResponder, textView.text != note.transcript {
             textView.text = note.transcript
         }
@@ -496,32 +525,28 @@ private struct TranscriptTextView: UIViewRepresentable {
         return CGSize(width: width, height: max(22, ceil(height)))
     }
 
-    private static let serifBody: UIFont = {
-        let base = UIFont.preferredFont(forTextStyle: .body)
-        guard let descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
-        return UIFont(descriptor: descriptor, size: base.pointSize)
-    }()
-
     final class Coordinator: NSObject, UITextViewDelegate {
         var note: Note
+        var editor: TimelineEditor
         var onHeight: (CGFloat) -> Void
         var onSave: () -> Void
+        var onLibrary: () -> Void = {}
+        var onCamera: () -> Void = {}
+        var voice: VoiceMemoController?
         var didFocus = false
+        let accessory = NoteKeyboardAccessory()
         weak var textView: UITextView?
 
-        init(note: Note, onHeight: @escaping (CGFloat) -> Void, onSave: @escaping () -> Void) {
+        init(note: Note, editor: TimelineEditor, onHeight: @escaping (CGFloat) -> Void, onSave: @escaping () -> Void) {
             self.note = note
+            self.editor = editor
             self.onHeight = onHeight
             self.onSave = onSave
         }
 
-        func makeAccessory(for textView: UITextView) -> UIToolbar {
-            self.textView = textView
-            let bar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 320, height: 44))
-            let save = UIBarButtonItem(title: "Save", style: .done, target: self, action: #selector(save))
-            let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-            bar.items = [flex, save]
-            return bar
+        func toggleRecording() {
+            guard note.audioFileName == nil || voice?.recordingNoteID == note.persistentModelID else { return }
+            voice?.toggleRecording(for: note, editor: editor)
         }
 
         @objc func save() {

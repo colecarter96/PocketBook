@@ -6,9 +6,48 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A1B2C3D430774D30006AE208 /* PocketBookWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1B2C3D430774D30006AE202 /* PocketBookWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A1B2C3D430774D30006AE209 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3771D54630774D30006AE2D2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1B2C3D430774D30006AE201;
+			remoteInfo = PocketBookWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1B2C3D430774D30006AE207 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A1B2C3D430774D30006AE208 /* PocketBookWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		3771D54E30774D30006AE2D2 /* PocketBook.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketBook.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D430774D30006AE202 /* PocketBookWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PocketBookWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A1B2C3D430774D30006AE20E /* Exceptions for "PocketBookWidget" folder in "PocketBookWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A1B2C3D430774D30006AE201 /* PocketBookWidget */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3771D55030774D30006AE2D2 /* PocketBook */ = {
@@ -16,10 +55,30 @@
 			path = PocketBook;
 			sourceTree = "<group>";
 		};
+		A1B2C3D430774D30006AE203 /* PocketBookWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A1B2C3D430774D30006AE20E /* Exceptions for "PocketBookWidget" folder in "PocketBookWidget" target */,
+			);
+			path = PocketBookWidget;
+			sourceTree = "<group>";
+		};
+		A1B2C3D430774D30006AE20F /* PocketBookShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PocketBookShared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		3771D54B30774D30006AE2D2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1B2C3D430774D30006AE205 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +92,8 @@
 			isa = PBXGroup;
 			children = (
 				3771D55030774D30006AE2D2 /* PocketBook */,
+				A1B2C3D430774D30006AE20F /* PocketBookShared */,
+				A1B2C3D430774D30006AE203 /* PocketBookWidget */,
 				3771D54F30774D30006AE2D2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +102,7 @@
 			isa = PBXGroup;
 			children = (
 				3771D54E30774D30006AE2D2 /* PocketBook.app */,
+				A1B2C3D430774D30006AE202 /* PocketBookWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,13 +117,16 @@
 				3771D54A30774D30006AE2D2 /* Sources */,
 				3771D54B30774D30006AE2D2 /* Frameworks */,
 				3771D54C30774D30006AE2D2 /* Resources */,
+				A1B2C3D430774D30006AE207 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A1B2C3D430774D30006AE20A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3771D55030774D30006AE2D2 /* PocketBook */,
+				A1B2C3D430774D30006AE20F /* PocketBookShared */,
 			);
 			name = PocketBook;
 			packageProductDependencies = (
@@ -69,6 +134,29 @@
 			productName = PocketBook;
 			productReference = 3771D54E30774D30006AE2D2 /* PocketBook.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A1B2C3D430774D30006AE201 /* PocketBookWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1B2C3D430774D30006AE20D /* Build configuration list for PBXNativeTarget "PocketBookWidget" */;
+			buildPhases = (
+				A1B2C3D430774D30006AE204 /* Sources */,
+				A1B2C3D430774D30006AE205 /* Frameworks */,
+				A1B2C3D430774D30006AE206 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1B2C3D430774D30006AE203 /* PocketBookWidget */,
+				A1B2C3D430774D30006AE20F /* PocketBookShared */,
+			);
+			name = PocketBookWidget;
+			packageProductDependencies = (
+			);
+			productName = PocketBookWidget;
+			productReference = A1B2C3D430774D30006AE202 /* PocketBookWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +169,9 @@
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
 					3771D54D30774D30006AE2D2 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					A1B2C3D430774D30006AE201 = {
 						CreatedOnToolsVersion = 16.2;
 					};
 				};
@@ -100,12 +191,20 @@
 			projectRoot = "";
 			targets = (
 				3771D54D30774D30006AE2D2 /* PocketBook */,
+				A1B2C3D430774D30006AE201 /* PocketBookWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		3771D54C30774D30006AE2D2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1B2C3D430774D30006AE206 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +221,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1B2C3D430774D30006AE204 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A1B2C3D430774D30006AE20A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1B2C3D430774D30006AE201 /* PocketBookWidget */;
+			targetProxy = A1B2C3D430774D30006AE209 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		3771D55A30774D33006AE2D2 /* Debug */ = {
@@ -249,12 +363,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PocketBookGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"PocketBook/Preview Content\"";
 				DEVELOPMENT_TEAM = 97MWT575V3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PocketBook-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";
@@ -281,12 +397,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = PocketBookGroup.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"PocketBook/Preview Content\"";
 				DEVELOPMENT_TEAM = 97MWT575V3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "PocketBook-Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";
@@ -302,6 +420,60 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.colecarter.PocketBook;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A1B2C3D430774D30006AE20B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PocketBookWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 97MWT575V3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PocketBookWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PocketBook;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.colecarter.PocketBook.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A1B2C3D430774D30006AE20C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = PocketBookWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 97MWT575V3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PocketBookWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = PocketBook;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.colecarter.PocketBook.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -325,6 +497,15 @@
 			buildConfigurations = (
 				3771D55D30774D33006AE2D2 /* Debug */,
 				3771D55E30774D33006AE2D2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1B2C3D430774D30006AE20D /* Build configuration list for PBXNativeTarget "PocketBookWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D430774D30006AE20B /* Debug */,
+				A1B2C3D430774D30006AE20C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

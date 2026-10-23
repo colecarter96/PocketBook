@@ -46,7 +46,7 @@ struct BoardsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Text("Lists you create will live here")
-                .font(.body)
+                .pocketBody()
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -58,7 +58,7 @@ struct BoardsView: View {
                 isCreatingBoard = true
             } label: {
                 Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
+                    .pocketBody(weight: .semibold)
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
@@ -80,16 +80,16 @@ struct BoardsView: View {
                     } label: {
                         HStack(spacing: 14) {
                             Image(systemName: "square.stack")
-                                .font(.body.weight(.medium))
+                                .pocketBody(weight: .medium)
                                 .foregroundStyle(.primary)
                                 .frame(width: 36, height: 36)
                                 .background(Color(.secondarySystemBackground), in: Circle())
                             Text(board.name)
-                                .font(.body)
+                                .pocketBody()
                                 .foregroundStyle(.primary)
                             Spacer(minLength: 8)
-                            Text("\(board.notes.count)")
-                                .font(.body)
+                            Text("\(board.listedNotes.count)")
+                                .pocketBody()
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 4)
@@ -101,7 +101,7 @@ struct BoardsView: View {
                         }
                     }
                     .listRowSeparator(.hidden)
-                    .listRowBackground(Color(.systemBackground))
+                    .listRowBackground(PocketCanvas())
                 }
             } header: {
                 HStack(alignment: .top) {
@@ -121,7 +121,7 @@ struct BoardsView: View {
                         isCreatingBoard = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.body.weight(.semibold))
+                            .pocketBody(weight: .semibold)
                             .foregroundStyle(.primary)
                             .frame(width: 36, height: 36)
                     }
@@ -135,7 +135,7 @@ struct BoardsView: View {
         .scrollIndicators(.hidden)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, PocketBarClearance.scroll, for: .scrollContent)
-        .background(Color(.systemBackground))
+        .background(PocketCanvas())
     }
 
     private func boardKey(_ board: Board) -> String {
@@ -143,7 +143,7 @@ struct BoardsView: View {
     }
 
     private func noteCountLabel(for board: Board) -> String {
-        let count = board.notes.count
+        let count = board.listedNotes.count
         return count == 1 ? "1 note" : "\(count) notes"
     }
 
@@ -163,14 +163,14 @@ struct BoardDetailView: View {
     @Environment(RecentDelete.self) private var recentDelete
 
     private var sortedNotes: [Note] {
-        board.notes.sorted { $0.createdAt > $1.createdAt }
+        board.listedNotes.sorted { $0.createdAt > $1.createdAt }
     }
 
     var body: some View {
         Group {
             if sortedNotes.isEmpty {
                 Text("Nothing on this list yet")
-                    .font(.system(.body, design: .serif))
+                    .pocketBody()
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -181,9 +181,8 @@ struct BoardDetailView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(note.text.isEmpty ? "Empty note" : note.text)
-                                    .font(.body)
+                                    .pocketBody()
                                     .foregroundStyle(note.text.isEmpty ? .tertiary : .primary)
-                                    .lineLimit(4)
 
                                 Text(note.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                                     .font(.caption)
@@ -192,7 +191,7 @@ struct BoardDetailView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
                         .listRowSeparator(.hidden)
-                        .listRowBackground(Color(.systemBackground))
+                        .listRowBackground(PocketCanvas())
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 deleteNote(note)
@@ -214,7 +213,7 @@ struct BoardDetailView: View {
                 .scrollIndicators(.hidden)
                 .scrollContentBackground(.hidden)
                 .contentMargins(.bottom, PocketBarClearance.scroll, for: .scrollContent)
-                .background(Color(.systemBackground))
+                .background(PocketCanvas())
             }
         }
         .navigationTitle(board.name)
@@ -286,7 +285,7 @@ struct BoardPickerSheet: View {
 
                 HStack {
                     TextField("New list", text: $newBoardName)
-                        .font(.system(.body, design: .serif))
+                        .pocketBody()
                     Button("Add") {
                         createBoardAndAssign()
                     }

@@ -10,15 +10,16 @@ import SwiftData
 
 @Model
 final class Note {
-    var text: String
-    var createdAt: Date
-    var boards: [Board]
+    var text: String = ""
+    var createdAt: Date = Date()
+    var boards: [Board]? = []
     var audioFileName: String? = nil
     var audioDuration: Double = 0
     var transcript: String = ""
     var imageFileNames: [String] = []
     var revisitDone: Bool = false
     var revisitAfter: Date? = nil
+    var widgetKey: String = ""
 
     init(text: String, createdAt: Date = .now) {
         self.text = text
@@ -30,6 +31,12 @@ final class Note {
         self.imageFileNames = []
         self.revisitDone = false
         self.revisitAfter = nil
+        self.widgetKey = UUID().uuidString
+    }
+
+    var lists: [Board] {
+        get { boards ?? [] }
+        set { boards = newValue }
     }
 
     var isBlank: Bool {
@@ -39,14 +46,16 @@ final class Note {
     }
 
     func isOn(_ board: Board) -> Bool {
-        boards.contains { $0.persistentModelID == board.persistentModelID }
+        lists.contains { $0.persistentModelID == board.persistentModelID }
     }
 
     func toggleBoard(_ board: Board) {
-        if let index = boards.firstIndex(where: { $0.persistentModelID == board.persistentModelID }) {
-            boards.remove(at: index)
+        var next = lists
+        if let index = next.firstIndex(where: { $0.persistentModelID == board.persistentModelID }) {
+            next.remove(at: index)
         } else {
-            boards.append(board)
+            next.append(board)
         }
+        boards = next
     }
 }

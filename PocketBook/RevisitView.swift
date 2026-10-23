@@ -12,22 +12,35 @@ struct RevisitView: View {
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
     @Query(sort: \Board.name, order: .forward) private var boards: [Board]
     @Environment(\.modelContext) private var modelContext
+    @Environment(RecentFiling.self) private var recentFiling
     @State private var draggingNoteID: PersistentIdentifier?
+    @State private var selectedNoteID: PersistentIdentifier?
     @State private var isCreatingBoard = false
     @State private var newBoardName = ""
+    @State private var showingWaiting = false
+    @State private var editorNoteID: PersistentIdentifier?
 
     private var looseNotes: [Note] {
         let now = Date()
         return notes.filter { note in
-            guard !note.revisitDone, !note.isBlank, note.boards.isEmpty else { return false }
+            guard !note.revisitDone, !note.isBlank, note.lists.isEmpty else { return false }
             let due = note.revisitAfter ?? .distantPast
             return due <= now
         }
     }
 
+    private var waitingNotes: [Note] {
+        let now = Date()
+        return notes.filter { note in
+            guard !note.revisitDone, !note.isBlank, note.lists.isEmpty else { return false }
+            guard let due = note.revisitAfter else { return false }
+            return due > now
+        }
+    }
+
     private var trayBoards: [Board] {
         boards.sorted { lhs, rhs in
-            if lhs.notes.count != rhs.notes.count { return lhs.notes.count > rhs.notes.count }
+            if lhs.listedNotes.count != rhs.listedNotes.count { return lhs.listedNotes.count > rhs.listedNotes.count }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
     }
@@ -37,25 +50,60 @@ struct RevisitView: View {
             ZStack(alignment: .bottom) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Revisit")
-                                .font(.largeTitle.bold())
-                            Text("Your unorganized thoughts, ready to find a home. Drag notes into boards or skip for now.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Revisit")
+                                    .font(.largeTitle.bold())
+                                Text(selectedNoteID == nil
+                                     ? "Tap a note, then tap a list to give it a home. The arrow opens it. See later sets it aside for 3 days."
+                                     : "Tap a list below to file this note.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            if recentFiling.canUndo {
+                                Button {
+                                    recentFiling.undo(in: modelContext)
+                                } label: {
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .font(.title3.weight(.medium))
+                                        .foregroundStyle(Color.gray.opacity(0.55))
+                                        .frame(width: 44, height: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Undo File")
+                            }
                         }
 
-                        if looseNotes.isEmpty {
+                        if looseNotes.isEmpty && waitingNotes.isEmpty {
                             Text("Nothing to revisit")
-                                .font(.body)
+                                .pocketBody()
                                 .foregroundStyle(.tertiary)
                                 .frame(maxWidth: .infinity, minHeight: 240)
                         } else {
-                            Text("\(looseNotes.count) NOTES")
-                                .font(.caption.weight(.medium))
-                                .tracking(0.8)
-                                .foregroundStyle(.secondary)
+                            if !looseNotes.isEmpty {
+                                Text("\(looseNotes.count) NOTES")
+                                    .font(.caption.weight(.medium))
+                                    .tracking(0.8)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if !waitingNotes.isEmpty {
+                                Button {
+                                    showingWaiting = true
+                                } label: {
+                                    Text(waitingNotes.count == 1 ? "1 coming back later" : "\(waitingNotes.count) coming back later")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            if looseNotes.isEmpty {
+                                Text("Nothing due right now")
+                                    .pocketBody()
+                                    .foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity, minHeight: 180)
+                            }
 
                             LazyVGrid(
                                 columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
@@ -79,11 +127,44 @@ struct RevisitView: View {
                     .padding(.bottom, PocketBarClearance.tray)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemBackground))
+            .background(PocketCanvas())
             .toolbar(.hidden, for: .navigationBar)
             .animation(.easeOut(duration: 0.22), value: looseNotes.count)
+            .navigationDestination(item: $editorNoteID) { id in
+                if let note = notes.first(where: { $0.persistentModelID == id }) {
+                    NoteDetailView(note: note)
+                }
+            }
         }
         .tint(.primary)
+        .sheet(isPresented: $showingWaiting) {
+            NavigationStack {
+                List(waitingNotes) { note in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(reading(note))
+                            .pocketBody()
+                            .foregroundStyle(.primary)
+                        if let due = note.revisitAfter {
+                            Text("Back \(due.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .swipeActions {
+                        Button("Revisit now") {
+                            bringBack(note)
+                        }
+                        .tint(.primary)
+                    }
+                }
+                .navigationTitle("Coming back later")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    Button("Done") { showingWaiting = false }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .alert("New Board", isPresented: $isCreatingBoard) {
             TextField("Ideas, Work, Fitness", text: $newBoardName)
             Button("Create") { createBoard() }
@@ -94,7 +175,7 @@ struct RevisitView: View {
     private func noteCard(_ note: Note) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(reading(note))
-                .font(.subheadline)
+                .pocketBody()
                 .foregroundStyle(.primary)
                 .lineLimit(6)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -103,26 +184,45 @@ struct RevisitView: View {
                 RevisitThumb(fileName: fileName)
             }
 
-            Text(stamp(note.createdAt))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(stamp(note.createdAt))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Button {
+                    later(note)
+                } label: {
+                    Text("see later")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color(.systemGray))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("See again in 3 days")
+            }
         }
         .padding(12)
-        .padding(.trailing, 16)
+        .padding(.trailing, 36)
         .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(selectedNoteID == note.persistentModelID ? 0.85 : 0), lineWidth: 1.5)
+        }
+        .onTapGesture {
+            selectedNoteID = selectedNoteID == note.persistentModelID ? nil : note.persistentModelID
+        }
         .overlay(alignment: .topTrailing) {
             Button {
-                later(note)
+                editorNoteID = note.persistentModelID
             } label: {
-                Circle()
-                    .strokeBorder(Color.primary.opacity(0.28), lineWidth: 1.5)
-                    .frame(width: 18, height: 18)
-                    .padding(12)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Skip for now")
+            .accessibilityLabel("Edit note")
         }
         .onDrag {
             draggingNoteID = note.persistentModelID
@@ -162,18 +262,22 @@ struct RevisitView: View {
     }
 
     private func boardChip(_ board: Board) -> some View {
-        BoardDropTarget(board: board, draggingNoteID: draggingNoteID) { noteID in
+        BoardDropTarget(board: board, draggingNoteID: draggingNoteID, onTap: {
+            guard let selectedNoteID,
+                  let note = notes.first(where: { $0.persistentModelID == selectedNoteID }) else { return }
+            place(note, on: board)
+        }, onDropNote: { noteID in
             guard let note = notes.first(where: { $0.persistentModelID == noteID }) else { return }
             place(note, on: board)
             draggingNoteID = nil
-        } label: {
+        }) {
             VStack(spacing: 6) {
                 Image(systemName: symbol(for: board))
-                    .font(.body.weight(.medium))
+                    .pocketBody(weight: .medium)
                 Text(board.name)
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
-                Text(noteCount(board.notes.count))
+                Text(noteCount(board.listedNotes.count))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -221,10 +325,17 @@ struct RevisitView: View {
     }
 
     private func place(_ note: Note, on board: Board) {
+        recentFiling.remember(note)
         if !note.isOn(board) {
             note.toggleBoard(board)
         }
         note.revisitDone = true
+        try? modelContext.save()
+        selectedNoteID = nil
+    }
+
+    private func bringBack(_ note: Note) {
+        note.revisitAfter = nil
         try? modelContext.save()
     }
 
@@ -245,12 +356,16 @@ struct RevisitView: View {
 private struct BoardDropTarget<Label: View>: View {
     var board: Board
     var draggingNoteID: PersistentIdentifier?
+    var onTap: () -> Void
     var onDropNote: (PersistentIdentifier) -> Void
     @ViewBuilder var label: () -> Label
     @State private var isTargeted = false
 
     var body: some View {
-        label()
+        Button(action: onTap) {
+            label()
+        }
+        .buttonStyle(.plain)
             .overlay {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .strokeBorder(Color.primary.opacity(isTargeted ? 0.8 : 0), lineWidth: 1.5)

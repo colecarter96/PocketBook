@@ -41,7 +41,7 @@ struct SearchView: View {
                         Button("Cancel") {
                             isSearchFocused.wrappedValue = false
                         }
-                        .font(.body)
+                        .pocketBody()
                         .foregroundStyle(.primary)
                     }
                 }
@@ -55,13 +55,13 @@ struct SearchView: View {
                     recentSearches
                 } else {
                     Text("Looking for something?")
-                        .font(.body)
+                        .pocketBody()
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color(.systemBackground))
+            .background(PocketCanvas())
             .toolbar(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
@@ -94,7 +94,7 @@ struct SearchView: View {
                 text: $query,
                 prompt: Text("Search").foregroundStyle(.tertiary)
             )
-            .font(.body)
+            .pocketBody()
             .focused(isSearchFocused)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -108,7 +108,7 @@ struct SearchView: View {
                     query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.body)
+                        .pocketBody()
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -129,10 +129,10 @@ struct SearchView: View {
                     } label: {
                         HStack(spacing: 14) {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.body)
+                                .pocketBody()
                                 .foregroundStyle(.tertiary)
                             Text(term)
-                                .font(.body)
+                                .pocketBody()
                                 .foregroundStyle(.primary)
                             Spacer(minLength: 0)
                         }
@@ -153,7 +153,7 @@ struct SearchView: View {
     private var searchResults: some View {
         if matches.isEmpty {
             Text("No matches")
-                .font(.body)
+                .pocketBody()
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -169,7 +169,7 @@ struct SearchView: View {
                 .buttonStyle(.plain)
                 .listRowInsets(EdgeInsets(top: 14, leading: 20, bottom: 14, trailing: 20))
                 .listRowSeparator(.hidden)
-                .listRowBackground(Color(.systemBackground))
+                .listRowBackground(PocketCanvas())
             }
             .listStyle(.plain)
             .scrollIndicators(.hidden)
@@ -188,7 +188,7 @@ private struct SearchResultRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(highlightedSnippet)
-                .font(.body)
+                .pocketBody()
                 .foregroundStyle(.primary)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
@@ -280,7 +280,17 @@ struct NoteDetailView: View {
                         }
                     }
                     if note.audioFileName != nil {
-                        MemoTranscript(note: note, isOpen: $transcriptOpen, isEditing: $transcriptEditing)
+                        MemoTranscript(
+                            note: note,
+                            isOpen: $transcriptOpen,
+                            isEditing: $transcriptEditing,
+                            editor: transcriptEditor,
+                            onLibrary: {
+                                libraryItems = []
+                                showLibrary = true
+                            },
+                            onCamera: { showCamera = true }
+                        )
                     }
                 }
                 .padding(.horizontal)
@@ -311,6 +321,7 @@ struct NoteDetailView: View {
             .padding(.bottom, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+            .toolbar(.visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
