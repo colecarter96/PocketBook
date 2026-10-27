@@ -322,29 +322,75 @@ private struct NoteImageThumbnail: View {
 }
 
 struct NoteImagePreview: View {
+    var fileNames: [String]
     var fileName: String
     var onClose: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var current: String
     @State private var image: UIImage?
 
+    init(fileNames: [String], fileName: String, onClose: @escaping () -> Void) {
+        let names = fileNames.isEmpty ? [fileName] : fileNames
+        self.fileNames = names
+        self.fileName = fileName
+        self.onClose = onClose
+        _current = State(initialValue: names.contains(fileName) ? fileName : names[0])
+    }
+
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.94)
-                .ignoresSafeArea()
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(24)
+        GeometryReader { geometry in
+            ZStack {
+                backdrop
+                    .ignoresSafeArea()
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(24)
+                        .id(current)
+                }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .contentShape(Rectangle())
+            .gesture(
+                SpatialTapGesture()
+                    .onEnded { value in
+                        handleTap(at: value.location.x, width: geometry.size.width)
+                    }
+            )
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onClose)
-        .task {
-            let name = fileName
-            image = await Task.detached(priority: .userInitiated) {
+        .task(id: current) {
+            let name = current
+            let loaded = await Task.detached(priority: .userInitiated) {
                 NoteImageStore.fullImage(fileName: name)
             }.value
+            guard current == name else { return }
+            image = loaded
         }
+    }
+
+    private var backdrop: Color {
+        colorScheme == .dark ? Color.black.opacity(0.94) : Color(white: 0.95)
+    }
+
+    private var index: Int {
+        fileNames.firstIndex(of: current) ?? 0
+    }
+
+    private func handleTap(at x: CGFloat, width: CGFloat) {
+        guard fileNames.count > 1 else {
+            onClose()
+            return
+        }
+        if x < width * 0.4, index > 0 {
+            current = fileNames[index - 1]
+            return
+        }
+        if x > width * 0.6, index < fileNames.count - 1 {
+            current = fileNames[index + 1]
+            return
+        }
+        onClose()
     }
 }
 

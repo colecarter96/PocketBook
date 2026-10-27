@@ -170,7 +170,9 @@ struct TimelineView: View {
             }
             .overlay {
                 if let previewImageName {
-                    NoteImagePreview(fileName: previewImageName) {
+                    let names = notes.first { $0.imageFileNames.contains(previewImageName) }?.imageFileNames
+                        ?? [previewImageName]
+                    NoteImagePreview(fileNames: names, fileName: previewImageName) {
                         self.previewImageName = nil
                     }
                 }

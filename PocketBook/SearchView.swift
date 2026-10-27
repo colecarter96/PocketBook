@@ -526,7 +526,7 @@ struct NoteDetailView: View {
             }
             .overlay {
                 if let previewImageName {
-                    NoteImagePreview(fileName: previewImageName) {
+                    NoteImagePreview(fileNames: note.imageFileNames, fileName: previewImageName) {
                         self.previewImageName = nil
                     }
                 }

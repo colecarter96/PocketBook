@@ -15,38 +15,46 @@ struct TimeRail: View {
     var onDragEnded: () -> Void
 
     private let hitWidth: CGFloat = 44
-    private let restThumbHeight: CGFloat = 18
-    private let activeThumbHeight: CGFloat = 36
+    private let thumbHeight: CGFloat = 18
 
     var body: some View {
         GeometryReader { geometry in
             let clampedProgress = min(1, max(0, progress))
-            let travel = max(geometry.size.height - activeThumbHeight, 1)
+            let travel = max(geometry.size.height - thumbHeight, 1)
             let thumbY = clampedProgress * travel
-            let thumbHeight = isDragging ? activeThumbHeight : restThumbHeight
-            let thumbOffset = thumbY + (activeThumbHeight - thumbHeight) / 2
+
+            let labelHeight: CGFloat = 36
+            let screenPad = max(16, geometry.safeAreaInsets.leading)
+            let topPad = max(16, geometry.safeAreaInsets.top)
+            let bottomPad = max(16, geometry.safeAreaInsets.bottom)
+            let minY = topPad
+            let maxY = max(minY, geometry.size.height - bottomPad - labelHeight)
+            let labelY = min(maxY, max(minY, thumbY + thumbHeight / 2 - labelHeight / 2))
+            let trailingInset = hitWidth + 12 + max(0, geometry.safeAreaInsets.trailing)
 
             ZStack(alignment: .topTrailing) {
-                rail(thumbOffset: thumbOffset, thumbHeight: thumbHeight)
-                    .animation(.easeInOut(duration: 0.22), value: isDragging)
+                rail(thumbOffset: thumbY, grabbed: isDragging)
 
-                if isDragging, let date {
-                    dateIndicator(date)
-                        .offset(y: thumbY - 2)
-                        .padding(.trailing, hitWidth)
-                        .transition(.opacity)
+                Group {
+                    if isDragging, let date {
+                        dateLabel(date)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.leading, screenPad)
+                            .padding(.trailing, trailingInset)
+                            .offset(y: labelY)
+                            .transition(.opacity)
+                    }
                 }
+                .animation(.easeOut(duration: 0.15), value: isDragging)
             }
-            .animation(.easeOut(duration: 0.18), value: isDragging)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-            .contentShape(railHitShape(height: geometry.size.height))
+            .contentShape(railHitShape(in: geometry.size))
             .gesture(dragGesture(height: geometry.size.height))
         }
-        .frame(width: hitWidth)
         .accessibilityHidden(true)
     }
 
-    private func rail(thumbOffset: CGFloat, thumbHeight: CGFloat) -> some View {
+    private func rail(thumbOffset: CGFloat, grabbed: Bool) -> some View {
         ZStack(alignment: .top) {
             Capsule()
                 .fill(Color.primary.opacity(0.12))
@@ -54,8 +62,10 @@ struct TimeRail: View {
                 .frame(maxHeight: .infinity)
 
             Capsule()
-                .fill(Color.primary.opacity(isDragging ? 0.55 : 0.28))
-                .frame(width: isDragging ? 4 : 2, height: thumbHeight)
+                .fill(Color.primary.opacity(0.28))
+                .frame(width: 2, height: thumbHeight)
+                .scaleEffect(grabbed ? 2.5 : 1, anchor: .center)
+                .animation(.easeOut(duration: 0.12), value: grabbed)
                 .offset(y: thumbOffset)
         }
         .frame(width: 12)
@@ -63,29 +73,30 @@ struct TimeRail: View {
         .padding(.trailing, 8)
     }
 
-    private func dateIndicator(_ date: Date) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(date, format: .dateTime.month(.abbreviated).day())
-                .textCase(.uppercase)
-            Text(date, format: .dateTime.year())
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .allowsHitTesting(false)
+    private func dateLabel(_ date: Date) -> some View {
+        Text(date, format: .dateTime.month(.abbreviated).day())
+            .textCase(.uppercase)
+            .font(.title3.weight(.medium))
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .allowsHitTesting(false)
     }
 
-    private func railHitShape(height: CGFloat) -> Path {
-        Path(CGRect(x: 0, y: 0, width: hitWidth, height: height))
+    private func railHitShape(in size: CGSize) -> Path {
+        Path(CGRect(x: max(0, size.width - hitWidth), y: 0, width: hitWidth, height: size.height))
     }
 
     private func dragGesture(height: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                let travel = max(height - activeThumbHeight, 1)
-                let y = value.location.y - (activeThumbHeight / 2)
+                let travel = max(height - thumbHeight, 1)
+                let y = value.location.y - (thumbHeight / 2)
                 onDragChanged(min(1, max(0, y / travel)))
             }
             .onEnded { _ in
