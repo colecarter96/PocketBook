@@ -27,6 +27,8 @@ enum RecentSearches {
 }
 
 enum PocketBarClearance {
+    /// Side inset shared by the nav capsule and the search bar.
+    static var barInset: CGFloat { 28 }
     /// Extra space above the custom bar. The system tab bar already insets its content.
     static var control: CGFloat { if #available(iOS 26.0, *) { 16 } else { 78 } }
     static var scroll: CGFloat { if #available(iOS 26.0, *) { 16 } else { 88 } }
@@ -44,7 +46,7 @@ struct StreamNavBar: View {
             .padding(4)
             .background(.ultraThinMaterial, in: Capsule(style: .continuous))
             .contentShape(Capsule())
-            .padding(.horizontal, 28)
+            .padding(.horizontal, PocketBarClearance.barInset)
             .animation(nil, value: selectedTab)
     }
 

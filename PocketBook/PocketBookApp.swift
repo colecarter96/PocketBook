@@ -327,13 +327,10 @@ struct RootView: View {
             }
         }
         .onChange(of: selectedTab) { _, tab in
-            guard #available(iOS 26.0, *) else { return }
-            if tab == .search {
-                searchFieldFocused = true
-                DispatchQueue.main.async {
-                    searchFieldFocused = true
-                }
-            } else {
+            if tab == .timeline {
+                timelineTopToken += 1
+            }
+            if tab != .search {
                 searchFieldFocused = false
             }
         }
@@ -400,16 +397,11 @@ struct RootView: View {
             timelineTopToken += 1
             return
         }
-        searchFieldFocused = tab == .search
+        searchFieldFocused = false
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             selectedTab = tab
-        }
-        if tab == .search {
-            DispatchQueue.main.async {
-                searchFieldFocused = true
-            }
         }
     }
 

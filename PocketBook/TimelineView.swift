@@ -22,6 +22,7 @@ struct TimelineView: View {
     @Environment(RecentFiling.self) private var recentFiling
     @Environment(VoiceMemoController.self) private var voiceMemos
     @Query(sort: \Note.createdAt, order: .reverse) private var notes: [Note]
+    @Query(sort: \Board.createdAt, order: .reverse) private var boards: [Board]
 
     @State private var editor = TimelineEditor()
     @State private var railProgress: CGFloat = 0
@@ -59,6 +60,8 @@ struct TimelineView: View {
     @State private var selectedNoteIDs: Set<PersistentIdentifier> = []
     @Environment(PocketSettings.self) private var settings
     @State private var showsReadingSettings = false
+    @State private var isCreatingList = false
+    @State private var newListName = ""
     @State private var handledNewNoteToken = 0
     @State private var handledWidgetOpen = 0
 
@@ -189,6 +192,11 @@ struct TimelineView: View {
         .sheet(isPresented: $showsReadingSettings) {
             ReadingSettingsSheet()
         }
+        .alert("New List", isPresented: $isCreatingList) {
+            TextField("Workout, Surf, Project A", text: $newListName)
+            Button("Create") { createList() }
+            Button("Cancel", role: .cancel) { newListName = "" }
+        }
         .onAppear {
             beginNote(from: newNoteToken)
             openWidgetNote()
@@ -305,6 +313,57 @@ struct TimelineView: View {
         .padding(.bottom, 8)
     }
 
+    private var lists: [Board] {
+        boards.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var listInk: Color {
+        settings.colorway == .dark ? .white : .black
+    }
+
+    private var listStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 18) {
+                Button {
+                    newListName = ""
+                    isCreatingList = true
+                } label: {
+                    Text("+")
+                        .pocketBody()
+                        .foregroundStyle(listInk)
+                        .frame(minWidth: 24, minHeight: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("New List")
+
+                ForEach(lists) { board in
+                    Button {
+                        onOpenList(board.persistentModelID)
+                    } label: {
+                        Text(board.name)
+                            .pocketBody()
+                            .foregroundStyle(listInk)
+                            .lineLimit(1)
+                            .frame(minHeight: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 0)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func createList() {
+        let name = newListName.trimmingCharacters(in: .whitespacesAndNewlines)
+        newListName = ""
+        guard !name.isEmpty else { return }
+        guard !boards.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
+        modelContext.insert(Board(name: name))
+        try? modelContext.save()
+    }
+
     private func requestHeaderTop() {
         headerTopToken += 1
     }
@@ -330,9 +389,9 @@ struct TimelineView: View {
         ZStack {
             Image(systemName: "plus")
                 .font(.title3.weight(.medium))
-                .foregroundStyle(settings.colorway == .dark ? Color.black : Color.white)
+                .foregroundStyle(.primary)
                 .frame(width: 56, height: 56)
-                .modifier(ComposeGlass(tint: settings.colorway == .dark ? .white : .black))
+                .modifier(ComposeGlass())
                 .allowsHitTesting(false)
 
             ComposeHitButton(action: startNewNote)
@@ -347,6 +406,8 @@ struct TimelineView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 0) {
             streamMasthead
+            listStrip
+                .padding(.horizontal, 20 * settings.reading.padScale)
             Text("Nothing captured yet")
                 .pocketBody()
                 .foregroundStyle(.tertiary)
@@ -363,6 +424,15 @@ struct TimelineView: View {
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                listStrip
+                    .listRowInsets(EdgeInsets(
+                        top: 2 * settings.reading.padScale,
+                        leading: 28 * settings.reading.padScale,
+                        bottom: 0,
+                        trailing: 20 * settings.reading.padScale
+                    ))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(PocketCanvas())
                 ForEach(notes) { note in
                     NoteRow(
                         note: note,
@@ -426,6 +496,18 @@ struct TimelineView: View {
                     ))
                     .listRowSeparator(.hidden)
                     .listRowBackground(PocketCanvas())
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if !isSelecting {
+                            ForEach(menuActions(for: note.persistentModelID).reversed(), id: \.self) { action in
+                                Button(role: action == .delete ? .destructive : nil) {
+                                    performNoteAction(action, on: note)
+                                } label: {
+                                    Label(action.title, systemImage: action.systemImage)
+                                }
+                                .tint(action == .delete ? Color.red : Color(white: 0.28))
+                            }
+                        }
+                    }
                 }
 
                 Color.clear
@@ -545,40 +627,8 @@ struct TimelineView: View {
         at point: CGPoint,
         noteID: PersistentIdentifier
     ) -> Bool {
-        if composeFrame.width > 1, composeFrame.insetBy(dx: -4, dy: -4).contains(point) {
-            return false
-        }
-        switch state {
-        case .began:
-            guard !isEditing, !isSelecting else { return false }
-            beginRadial(noteID: noteID, at: point)
-            return true
-        case .changed:
-            guard radialNoteID != nil, let radialOrigin else { return false }
-            radialFinger = point
-            let next = action(at: point, origin: radialOrigin)
-            if next != hoveredAction {
-                hoveredAction = next
-                if next != nil {
-                    UISelectionFeedbackGenerator().selectionChanged()
-                }
-            }
-            return true
-        case .ended:
-            let wasChoosing = radialNoteID != nil
-            finishRadial()
-            if wasChoosing {
-                editor.end()
-            }
-            return true
-        case .cancelled, .failed:
-            if radialNoteID != nil {
-                cancelRadial()
-            }
-            return true
-        default:
-            return radialNoteID != nil
-        }
+        _ = (state, point, noteID)
+        return false
     }
 
     private func edit(_ note: Note) {
@@ -623,6 +673,10 @@ struct TimelineView: View {
         let noteID = radialNoteID
         cancelRadial()
         guard let action, let noteID, let note = notes.first(where: { $0.persistentModelID == noteID }) else { return }
+        performNoteAction(action, on: note)
+    }
+
+    private func performNoteAction(_ action: NotePressAction, on note: Note) {
         switch action {
         case .copy:
             UIPasteboard.general.string = note.text
@@ -934,7 +988,7 @@ private struct ComposeFramePreference: PreferenceKey {
     }
 }
 
-private struct ComposeHitButton: UIViewRepresentable {
+struct ComposeHitButton: UIViewRepresentable {
     var action: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -980,14 +1034,12 @@ private struct ComposeHitButton: UIViewRepresentable {
     }
 }
 
-private struct ComposeGlass: ViewModifier {
-    var tint: Color
-
+struct ComposeGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.tint(tint.opacity(0.62)), in: Circle())
+            content.glassEffect(.regular, in: Circle())
         } else {
-            content.background(tint.opacity(0.88), in: Circle())
+            content.background(.ultraThinMaterial, in: Circle())
         }
     }
 }

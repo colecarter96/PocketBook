@@ -372,6 +372,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "PocketBook-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = " ";
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";
@@ -407,6 +408,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "PocketBook-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = " ";
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketBook uses the camera so you can add a photo to a note.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "PocketBook uses the microphone so a note can keep a voice memo.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "PocketBook uses speech recognition to add the words from a voice memo to the note.";

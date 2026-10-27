@@ -34,46 +34,18 @@ struct SearchView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 12) {
-                    searchField
-                    if isSearchFocused.wrappedValue {
-                        Button("Cancel") {
-                            isSearchFocused.wrappedValue = false
-                        }
-                        .pocketBody()
-                        .foregroundStyle(.primary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                if !trimmedQuery.isEmpty {
-                    searchResults
-                } else if !recents.isEmpty {
-                    recentSearches
-                } else {
-                    Text("Looking for something?")
-                        .pocketBody()
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+            ZStack(alignment: .top) {
+                PocketCanvas()
+                pageContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(PocketCanvas())
-            .toolbar(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button {
-                        isSearchFocused.wrappedValue = false
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                    .accessibilityLabel("Dismiss Keyboard")
-                }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                searchBar
+                    .padding(.horizontal, PocketBarClearance.barInset)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
             }
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $openedNoteID) { id in
                 if let note = notes.first(where: { $0.persistentModelID == id }) {
                     NoteDetailView(note: note)
@@ -83,46 +55,84 @@ struct SearchView: View {
         .tint(.primary)
     }
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            TextField(
-                "",
-                text: $query,
-                prompt: Text("Search").foregroundStyle(.tertiary)
-            )
-            .pocketBody()
-            .focused(isSearchFocused)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .submitLabel(.search)
-            .onSubmit {
-                isSearchFocused.wrappedValue = false
-            }
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .pocketBody()
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear")
-            }
+    @ViewBuilder
+    private var pageContent: some View {
+        if !trimmedQuery.isEmpty {
+            searchResults
+        } else if !recents.isEmpty {
+            recentSearches
+        } else {
+            Text("Looking for something?")
+                .pocketBody()
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var searchBar: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                TextField(
+                    "",
+                    text: $query,
+                    prompt: Text("Search").foregroundStyle(.tertiary)
+                )
+                .id("pocket-search-field")
+                .pocketBody()
+                .focused(isSearchFocused)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .onSubmit {
+                    hideKeyboard()
+                }
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, query.isEmpty ? 48 : 82)
+            .frame(height: 52)
+            .modifier(SearchBarGlass())
+
+            HStack(spacing: 4) {
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color(.systemGray))
+                            .frame(width: 30, height: 34)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear")
+                }
+
+                RedGlassDismissButton(action: hideKeyboard)
+                    .frame(width: 34, height: 34)
+            }
+            .padding(.trailing, 9)
+        }
+    }
+
+    private func hideKeyboard() {
+        isSearchFocused.wrappedValue = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private var recentSearches: some View {
         ScrollView {
             VStack(spacing: 0) {
+                Text("RECENT")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
+                    .padding(.bottom, 2)
+
                 ForEach(recents, id: \.self) { term in
                     Button {
                         onPickRecent(term)
@@ -143,10 +153,11 @@ struct SearchView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, isSearchFocused.wrappedValue ? 16 : PocketBarClearance.scroll)
+            .padding(.bottom, 16)
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder
@@ -175,9 +186,98 @@ struct SearchView: View {
             .scrollIndicators(.hidden)
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
-            .contentMargins(.bottom, isSearchFocused.wrappedValue ? 16 : PocketBarClearance.scroll, for: .scrollContent)
+            .contentMargins(.bottom, 16, for: .scrollContent)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+private struct SearchBarGlass: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: Capsule(style: .continuous))
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        }
+    }
+}
+
+private struct RedGlassDismissButton: UIViewRepresentable {
+    var action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> RedGlassButton {
+        let button = RedGlassButton(type: .custom)
+        button.accessibilityLabel = "Hide"
+        button.addTarget(context.coordinator, action: #selector(Coordinator.tap), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: RedGlassButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: RedGlassButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 34, height: proposal.height ?? 34)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tap() {
+            action()
+        }
+    }
+}
+
+private final class RedGlassButton: UIButton {
+    private let mark = UIImageView()
+    private let glass: UIVisualEffectView?
+
+    override init(frame: CGRect) {
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.tintColor = .systemRed
+            glass = UIVisualEffectView(effect: effect)
+        } else {
+            glass = nil
+        }
+        super.init(frame: frame)
+        if let glass {
+            glass.isUserInteractionEnabled = false
+            glass.clipsToBounds = true
+            addSubview(glass)
+        } else {
+            backgroundColor = .systemRed
+            clipsToBounds = true
+        }
+        mark.image = UIImage(systemName: "chevron.down")?
+            .withConfiguration(UIImage.SymbolConfiguration(pointSize: 16, weight: .bold))
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        mark.contentMode = .center
+        mark.isUserInteractionEnabled = false
+        addSubview(mark)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glass?.frame = bounds
+        glass?.layer.cornerRadius = bounds.height / 2
+        if glass == nil {
+            layer.cornerRadius = bounds.height / 2
+        }
+        mark.frame = bounds
     }
 }
 
