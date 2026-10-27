@@ -95,7 +95,7 @@ struct TimelineView: View {
                                 .font(.title3.weight(.medium))
                                 .foregroundStyle(Color.gray.opacity(0.55))
                         }
-                        .accessibilityLabel("Undo Delete")
+                        .accessibilityLabel("Undo")
                     }
 
                     if recentFiling.canUndo {
@@ -739,7 +739,7 @@ struct TimelineView: View {
 
     private func removeMemo(from note: Note) {
         voiceMemos.stopPlayback(of: note)
-        VoiceMemoStore.delete(note.audioFileName)
+        recentDelete.rememberRemovedMemo(from: note)
         note.audioFileName = nil
         note.audioDuration = 0
         note.transcript = ""
@@ -747,10 +747,10 @@ struct TimelineView: View {
     }
 
     private func removeImage(_ fileName: String, from note: Note) {
+        recentDelete.rememberRemovedPhoto(fileName, from: note)
         var names = note.imageFileNames
         names.removeAll { $0 == fileName }
         note.imageFileNames = names
-        NoteImageStore.delete(fileName)
         persist()
         if names.isEmpty {
             editingPhotosNoteID = nil

@@ -31,7 +31,8 @@ struct PocketBookApp: App {
 
 @Observable
 final class RecentDelete {
-    private(set) var snapshots: [Snapshot] = []
+    private(set) var steps: [Step] = []
+    private let limit = 3
 
     struct Snapshot {
         var text: String
@@ -59,44 +60,176 @@ final class RecentDelete {
         }
     }
 
-    var canUndo: Bool { !snapshots.isEmpty }
+    struct PhotoRemoval {
+        var widgetKey: String
+        var fileName: String
+        var index: Int
+    }
+
+    struct MemoRemoval {
+        var widgetKey: String
+        var audioFileName: String
+        var audioDuration: Double
+        var transcript: String
+    }
+
+    enum Step {
+        case deleted([Snapshot])
+        case photos([PhotoRemoval])
+        case memo(MemoRemoval)
+    }
+
+    var canUndo: Bool { !steps.isEmpty }
 
     func remember(_ note: Note) {
         remember([note])
     }
 
     func remember(_ notes: [Note]) {
-        let incomingAudio = Set(notes.compactMap(\.audioFileName))
-        let incomingImages = Set(notes.flatMap(\.imageFileNames))
-        for previous in snapshots {
-            if let audio = previous.audioFileName, !incomingAudio.contains(audio) {
-                VoiceMemoStore.delete(audio)
-            }
-            for name in previous.imageFileNames where !incomingImages.contains(name) {
-                NoteImageStore.delete(name)
-            }
+        let snapshots = notes.map { note -> Snapshot in
+            ensureKey(note)
+            return Snapshot(note)
         }
-        snapshots = notes.map(Snapshot.init)
+        guard !snapshots.isEmpty else { return }
+        push(.deleted(snapshots))
+    }
+
+    func rememberRemovedPhoto(_ fileName: String, from note: Note) {
+        ensureKey(note)
+        let removal = PhotoRemoval(
+            widgetKey: note.widgetKey,
+            fileName: fileName,
+            index: note.imageFileNames.firstIndex(of: fileName) ?? note.imageFileNames.count
+        )
+        if case .photos(var existing) = steps.last {
+            existing.append(removal)
+            steps[steps.count - 1] = .photos(existing)
+        } else {
+            push(.photos([removal]))
+        }
+    }
+
+    func rememberRemovedMemo(from note: Note) {
+        guard let audioFileName = note.audioFileName else { return }
+        ensureKey(note)
+        push(.memo(MemoRemoval(
+            widgetKey: note.widgetKey,
+            audioFileName: audioFileName,
+            audioDuration: note.audioDuration,
+            transcript: note.transcript
+        )))
     }
 
     func undo(in context: ModelContext) {
-        guard !snapshots.isEmpty else { return }
-        for snapshot in snapshots {
-            let note = Note(text: snapshot.text, createdAt: snapshot.createdAt)
-            context.insert(note)
-            note.boards = snapshot.boards
-            note.audioFileName = snapshot.audioFileName
-            note.audioDuration = snapshot.audioDuration
-            note.transcript = snapshot.transcript
-            note.imageFileNames = snapshot.imageFileNames
-            note.revisitDone = snapshot.revisitDone
-            note.revisitAfter = snapshot.revisitAfter
-            if !snapshot.widgetKey.isEmpty {
-                note.widgetKey = snapshot.widgetKey
+        guard let step = steps.popLast() else { return }
+        switch step {
+        case .deleted(let snapshots):
+            for snapshot in snapshots {
+                restore(snapshot, in: context)
             }
+        case .photos(let removals):
+            for removal in removals.reversed() {
+                guard let note = note(widgetKey: removal.widgetKey, in: context) else { continue }
+                var names = note.imageFileNames
+                guard !names.contains(removal.fileName) else { continue }
+                names.insert(removal.fileName, at: min(removal.index, names.count))
+                note.imageFileNames = names
+            }
+        case .memo(let removal):
+            guard let note = note(widgetKey: removal.widgetKey, in: context) else { break }
+            note.audioFileName = removal.audioFileName
+            note.audioDuration = removal.audioDuration
+            note.transcript = removal.transcript
         }
         try? context.save()
-        snapshots = []
+    }
+
+    func retainedAudioNames() -> Set<String> {
+        var names = Set<String>()
+        for step in steps {
+            switch step {
+            case .deleted(let snapshots):
+                names.formUnion(snapshots.compactMap(\.audioFileName))
+            case .photos:
+                break
+            case .memo(let removal):
+                names.insert(removal.audioFileName)
+            }
+        }
+        return names
+    }
+
+    func retainedImageNames() -> Set<String> {
+        var names = Set<String>()
+        for step in steps {
+            switch step {
+            case .deleted(let snapshots):
+                names.formUnion(snapshots.flatMap(\.imageFileNames))
+            case .photos(let removals):
+                names.formUnion(removals.map(\.fileName))
+            case .memo:
+                break
+            }
+        }
+        return names
+    }
+
+    private func ensureKey(_ note: Note) {
+        if note.widgetKey.isEmpty {
+            note.widgetKey = UUID().uuidString
+        }
+    }
+
+    private func push(_ step: Step) {
+        steps.append(step)
+        while steps.count > limit {
+            purge(steps.removeFirst())
+        }
+    }
+
+    private func purge(_ step: Step) {
+        let audio = retainedAudioNames()
+        let images = retainedImageNames()
+        switch step {
+        case .deleted(let snapshots):
+            for snapshot in snapshots {
+                if let name = snapshot.audioFileName, !audio.contains(name) {
+                    VoiceMemoStore.delete(name)
+                }
+                for name in snapshot.imageFileNames where !images.contains(name) {
+                    NoteImageStore.delete(name)
+                }
+            }
+        case .photos(let removals):
+            for removal in removals where !images.contains(removal.fileName) {
+                NoteImageStore.delete(removal.fileName)
+            }
+        case .memo(let removal):
+            if !audio.contains(removal.audioFileName) {
+                VoiceMemoStore.delete(removal.audioFileName)
+            }
+        }
+    }
+
+    private func restore(_ snapshot: Snapshot, in context: ModelContext) {
+        let note = Note(text: snapshot.text, createdAt: snapshot.createdAt)
+        context.insert(note)
+        note.boards = snapshot.boards
+        note.audioFileName = snapshot.audioFileName
+        note.audioDuration = snapshot.audioDuration
+        note.transcript = snapshot.transcript
+        note.imageFileNames = snapshot.imageFileNames
+        note.revisitDone = snapshot.revisitDone
+        note.revisitAfter = snapshot.revisitAfter
+        if !snapshot.widgetKey.isEmpty {
+            note.widgetKey = snapshot.widgetKey
+        }
+    }
+
+    private func note(widgetKey: String, in context: ModelContext) -> Note? {
+        guard !widgetKey.isEmpty else { return nil }
+        let notes = (try? context.fetch(FetchDescriptor<Note>())) ?? []
+        return notes.first { $0.widgetKey == widgetKey }
     }
 }
 
@@ -307,17 +440,11 @@ struct RootView: View {
             await PocketCloudStore.prepare()
             let notes = (try? modelContext.fetch(FetchDescriptor<Note>())) ?? []
             var keptAudio = Set(notes.compactMap(\.audioFileName))
-            for pending in recentDelete.snapshots {
-                if let audio = pending.audioFileName {
-                    keptAudio.insert(audio)
-                }
-            }
+            keptAudio.formUnion(recentDelete.retainedAudioNames())
             VoiceMemoStore.deleteAll(except: keptAudio)
 
             var keptImages = Set(notes.flatMap(\.imageFileNames))
-            for pending in recentDelete.snapshots {
-                keptImages.formUnion(pending.imageFileNames)
-            }
+            keptImages.formUnion(recentDelete.retainedImageNames())
             NoteImageStore.deleteAll(except: keptImages)
         }
         .onChange(of: searchFieldFocused) { _, focused in

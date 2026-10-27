@@ -535,7 +535,7 @@ struct NoteDetailView: View {
 
     private func removeMemo() {
         voice.stopPlayback(of: note)
-        VoiceMemoStore.delete(note.audioFileName)
+        recentDelete.rememberRemovedMemo(from: note)
         note.audioFileName = nil
         note.audioDuration = 0
         note.transcript = ""
@@ -543,10 +543,10 @@ struct NoteDetailView: View {
     }
 
     private func removeImage(_ fileName: String) {
+        recentDelete.rememberRemovedPhoto(fileName, from: note)
         var names = note.imageFileNames
         names.removeAll { $0 == fileName }
         note.imageFileNames = names
-        NoteImageStore.delete(fileName)
         try? modelContext.save()
         if names.isEmpty {
             isArrangingPhotos = false
