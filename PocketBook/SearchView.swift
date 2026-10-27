@@ -508,11 +508,11 @@ struct NoteDetailView: View {
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker { image in
-                    if let image {
-                        NoteImageStore.append(image, to: note)
-                        try? modelContext.save()
-                    }
                     showCamera = false
+                    guard let image else { return }
+                    Task {
+                        await NoteImageStore.append(image, to: note)
+                    }
                 }
                 .ignoresSafeArea()
             }

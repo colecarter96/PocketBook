@@ -159,11 +159,12 @@ struct TimelineView: View {
                 )
             ) {
                 CameraPicker { image in
-                    if let image, let note = cameraNote {
-                        NoteImageStore.append(image, to: note)
-                        try? note.modelContext?.save()
-                    }
+                    let note = cameraNote
                     cameraNote = nil
+                    guard let image, let note else { return }
+                    Task {
+                        await NoteImageStore.append(image, to: note)
+                    }
                 }
                 .ignoresSafeArea()
             }

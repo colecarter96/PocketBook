@@ -25,7 +25,7 @@ private struct PickedNoteImage: Transferable {
 
 enum NoteImageStore {
     static var directory: URL {
-        PocketCloudStore.directory(folder: "NoteImages")
+        PocketCloudStore.localDirectoryURL(folder: "NoteImages")
     }
 
     static func fileURL(_ fileName: String) -> URL {
@@ -34,16 +34,12 @@ enum NoteImageStore {
 
     static func delete(_ fileName: String?) {
         guard let fileName else { return }
-        try? FileManager.default.removeItem(at: fileURL(fileName))
+        PocketCloudStore.remove(fileName, folder: "NoteImages")
     }
 
     static func deleteAll(except kept: Set<String>) {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return }
-        for url in files where !kept.contains(url.lastPathComponent) {
-            try? FileManager.default.removeItem(at: url)
+        for name in PocketCloudStore.fileNames(in: "NoteImages") where !kept.contains(name) {
+            PocketCloudStore.remove(name, folder: "NoteImages")
         }
     }
 
@@ -51,28 +47,33 @@ enum NoteImageStore {
     static func importPhotos(_ items: [PhotosPickerItem], into note: Note) async {
         for item in items {
             guard let picked = try? await item.loadTransferable(type: PickedNoteImage.self) else { continue }
-            append(picked.data, to: note)
+            let data = picked.data
+            let fileName = await Task.detached(priority: .userInitiated) {
+                writeJPEG(from: data)
+            }.value
+            if let fileName {
+                remember(fileName, on: note)
+            }
         }
         try? note.modelContext?.save()
     }
 
     @MainActor
-    static func append(_ data: Data, to note: Note) {
-        guard let image = UIImage(data: data) else { return }
-        append(image, to: note)
+    static func append(_ image: UIImage, to note: Note) async {
+        let fileName = await Task.detached(priority: .userInitiated) {
+            autoreleasepool {
+                writeJPEG(from: image)
+            }
+        }.value
+        guard let fileName else { return }
+        remember(fileName, on: note)
+        try? note.modelContext?.save()
     }
 
     @MainActor
-    static func append(_ image: UIImage, to note: Note) {
-        guard let jpeg = compressedJPEG(image) else { return }
-        let url = directory.appendingPathComponent(UUID().uuidString + ".jpg")
-        do {
-            try jpeg.write(to: url, options: .atomic)
-        } catch {
-            return
-        }
+    private static func remember(_ fileName: String, on note: Note) {
         var names = note.imageFileNames
-        names.append(url.lastPathComponent)
+        names.append(fileName)
         note.imageFileNames = names
     }
 
@@ -98,10 +99,64 @@ enum NoteImageStore {
         return UIImage(cgImage: cgImage)
     }
 
+    private static func writeJPEG(from data: Data) -> String? {
+        autoreleasepool {
+            guard let jpeg = compressedJPEG(from: data) else { return nil }
+            return store(jpeg)
+        }
+    }
+
+    private static func writeJPEG(from image: UIImage) -> String? {
+        guard let jpeg = compressedJPEG(image) else { return nil }
+        return store(jpeg)
+    }
+
+    private static func store(_ jpeg: Data) -> String? {
+        let name = UUID().uuidString + ".jpg"
+        let url = PocketCloudStore.localFileURL(name, folder: "NoteImages")
+        do {
+            try jpeg.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        PocketCloudStore.publish(name, folder: "NoteImages")
+        return name
+    }
+
+    private static func compressedJPEG(from data: Data) -> Data? {
+        let sourceOptions: [CFString: Any] = [
+            kCGImageSourceShouldCache: false
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return nil
+        }
+        let thumb: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: 1600,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumb as CFDictionary) else {
+            return nil
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        let properties: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.82
+        ]
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+
     private static func compressedJPEG(_ image: UIImage) -> Data? {
-        let longest = max(image.size.width, image.size.height)
-        let scale = min(1, 1600 / max(longest, 1))
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let longest = max(pixelWidth, pixelHeight)
+        let factor = min(1, 1600 / max(longest, 1))
+        let size = CGSize(width: pixelWidth * factor, height: pixelHeight * factor)
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
         let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
@@ -248,7 +303,10 @@ private struct NoteImageThumbnail: View {
             }
         }
         .task {
-            image = NoteImageStore.thumbnail(fileName: fileName)
+            let name = fileName
+            image = await Task.detached(priority: .userInitiated) {
+                NoteImageStore.thumbnail(fileName: name)
+            }.value
         }
     }
 
@@ -282,7 +340,10 @@ struct NoteImagePreview: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onClose)
         .task {
-            image = NoteImageStore.fullImage(fileName: fileName)
+            let name = fileName
+            image = await Task.detached(priority: .userInitiated) {
+                NoteImageStore.fullImage(fileName: name)
+            }.value
         }
     }
 }

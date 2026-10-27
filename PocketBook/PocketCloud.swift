@@ -10,6 +10,7 @@ enum PocketCloudStore {
     static let containerID = "iCloud.com.colecarter.PocketBook"
 
     private static let cloudRoot = OSAllocatedUnfairLock<URL?>(initialState: nil)
+    private static let moveLock = NSLock()
 
     static func prepare() async {
         let root = await Task.detached(priority: .utility) {
@@ -17,15 +18,66 @@ enum PocketCloudStore {
         }.value
         cloudRoot.withLock { $0 = root }
         guard root != nil else { return }
-        migrate(folder: "NoteImages")
-        migrate(folder: "VoiceMemos")
+        await Task.detached(priority: .utility) {
+            migrate(folder: "NoteImages")
+            migrate(folder: "VoiceMemos")
+        }.value
+    }
+
+    static func localDirectoryURL(folder: String) -> URL {
+        localDirectory(folder: folder)
+    }
+
+    static func localFileURL(_ fileName: String, folder: String) -> URL {
+        localDirectory(folder: folder).appendingPathComponent(fileName)
+    }
+
+    static func publish(_ fileName: String, folder: String) {
+        moveLock.lock()
+        defer { moveLock.unlock() }
+        let source = localDirectory(folder: folder).appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: source.path) else { return }
+        guard let destination = cloudDirectory(folder: folder)?.appendingPathComponent(fileName) else { return }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try? FileManager.default.removeItem(at: source)
+            return
+        }
+        try? FileManager.default.setUbiquitous(true, itemAt: source, destinationURL: destination)
+    }
+
+    static func remove(_ fileName: String, folder: String) {
+        moveLock.lock()
+        defer { moveLock.unlock() }
+        let local = localDirectory(folder: folder).appendingPathComponent(fileName)
+        if FileManager.default.fileExists(atPath: local.path) {
+            try? FileManager.default.removeItem(at: local)
+        }
+        if let cloud = cloudDirectory(folder: folder)?.appendingPathComponent(fileName),
+           FileManager.default.fileExists(atPath: cloud.path) {
+            try? FileManager.default.removeItem(at: cloud)
+        }
+    }
+
+    static func fileNames(in folder: String) -> [String] {
+        var names = Set<String>()
+        var folders = [localDirectory(folder: folder)]
+        if let cloud = cloudDirectory(folder: folder) {
+            folders.append(cloud)
+        }
+        for folderURL in folders {
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: nil
+            ) else { continue }
+            for file in files {
+                names.insert(file.lastPathComponent)
+            }
+        }
+        return Array(names)
     }
 
     static func directory(folder: String) -> URL {
-        if let cloud = cloudDirectory(folder: folder) {
-            return cloud
-        }
-        return localDirectory(folder: folder)
+        localDirectory(folder: folder)
     }
 
     static func fileURL(_ fileName: String, folder: String) -> URL {
@@ -62,19 +114,14 @@ enum PocketCloudStore {
     }
 
     private static func migrate(folder: String) {
-        guard let destination = cloudDirectory(folder: folder) else { return }
+        guard cloudDirectory(folder: folder) != nil else { return }
         let source = localDirectory(folder: folder)
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: source,
             includingPropertiesForKeys: nil
         ) else { return }
         for file in files {
-            let target = destination.appendingPathComponent(file.lastPathComponent)
-            if FileManager.default.fileExists(atPath: target.path) {
-                try? FileManager.default.removeItem(at: file)
-                continue
-            }
-            try? FileManager.default.setUbiquitous(true, itemAt: file, destinationURL: target)
+            publish(file.lastPathComponent, folder: folder)
         }
     }
 

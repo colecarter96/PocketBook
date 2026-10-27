@@ -387,7 +387,10 @@ private struct RevisitThumb: View {
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .task {
-            image = NoteImageStore.thumbnail(fileName: fileName)
+            let name = fileName
+            image = await Task.detached(priority: .userInitiated) {
+                NoteImageStore.thumbnail(fileName: name)
+            }.value
         }
     }
 }

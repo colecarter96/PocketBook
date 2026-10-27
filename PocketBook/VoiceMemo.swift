@@ -11,7 +11,7 @@ import UIKit
 
 enum VoiceMemoStore {
     static var directory: URL {
-        PocketCloudStore.directory(folder: "VoiceMemos")
+        PocketCloudStore.localDirectoryURL(folder: "VoiceMemos")
     }
 
     static func fileURL(_ fileName: String) -> URL {
@@ -19,21 +19,17 @@ enum VoiceMemoStore {
     }
 
     static func makeFileURL() -> URL {
-        directory.appendingPathComponent(UUID().uuidString + ".m4a")
+        PocketCloudStore.localFileURL(UUID().uuidString + ".m4a", folder: "VoiceMemos")
     }
 
     static func delete(_ fileName: String?) {
         guard let fileName else { return }
-        try? FileManager.default.removeItem(at: fileURL(fileName))
+        PocketCloudStore.remove(fileName, folder: "VoiceMemos")
     }
 
     static func deleteAll(except kept: Set<String>) {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return }
-        for url in files where !kept.contains(url.lastPathComponent) {
-            try? FileManager.default.removeItem(at: url)
+        for name in PocketCloudStore.fileNames(in: "VoiceMemos") where !kept.contains(name) {
+            PocketCloudStore.remove(name, folder: "VoiceMemos")
         }
     }
 }
@@ -196,7 +192,10 @@ final class VoiceMemoController {
     private func transcribe(url: URL, into note: Note, editor: TimelineEditor?) {
         SFSpeechRecognizer.requestAuthorization { status in
             Task { @MainActor in
-                guard status == .authorized else { return }
+                guard status == .authorized else {
+                    self.publishMemo(url)
+                    return
+                }
                 self.startRecognition(url: url, into: note, editor: editor, onDevice: true)
             }
         }
@@ -208,7 +207,10 @@ final class VoiceMemoController {
         editor: TimelineEditor?,
         onDevice: Bool
     ) {
-        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { return }
+        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else {
+            publishMemo(url)
+            return
+        }
         if onDevice, !recognizer.supportsOnDeviceRecognition {
             startRecognition(url: url, into: note, editor: editor, onDevice: false)
             return
@@ -227,22 +229,36 @@ final class VoiceMemoController {
             let isFinal = result?.isFinal ?? false
             Task { @MainActor in
                 guard let self, self.recognitionGeneration == generation else { return }
-                if isFinal, !transcript.isEmpty {
+                if isFinal {
                     self.recognitionGeneration = UUID()
                     self.recognitionTask = nil
                     self.recognitionRequest = nil
-                    editor?.insertTranscript(transcript, into: note)
+                    if !transcript.isEmpty {
+                        editor?.insertTranscript(transcript, into: note)
+                    }
+                    self.publishMemo(url)
                 } else if error != nil {
                     self.recognitionGeneration = UUID()
                     self.recognitionTask = nil
                     self.recognitionRequest = nil
                     if onDevice {
                         self.startRecognition(url: url, into: note, editor: editor, onDevice: false)
-                    } else if !transcript.isEmpty {
-                        editor?.insertTranscript(transcript, into: note)
+                    } else {
+                        if !transcript.isEmpty {
+                            editor?.insertTranscript(transcript, into: note)
+                        }
+                        self.publishMemo(url)
                     }
                 }
             }
+        }
+    }
+
+    private func publishMemo(_ url: URL) {
+        if player?.url == url { return }
+        let name = url.lastPathComponent
+        Task.detached(priority: .utility) {
+            PocketCloudStore.publish(name, folder: "VoiceMemos")
         }
     }
 
